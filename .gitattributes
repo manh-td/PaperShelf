@@ -1,0 +1,10 @@
+# Normalize text files; keep Unix scripts LF and Windows scripts CRLF wherever they are checked out.
+* text=auto
+*.sh text eol=lf
+pdf_helper/gradlew text eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+*.jar binary
+*.pdf binary
+*.png binary

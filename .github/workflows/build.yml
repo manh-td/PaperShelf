@@ -1,0 +1,185 @@
+# Builds the PaperShelf desktop packages from the latest code:
+#   PaperShelf-<version>-linux-x86_64.tar.gz and PaperShelf-<version>-windows-x86_64.zip
+# Both include the PDF helper and their own Java 17 runtime, so users need nothing else.
+# Run it by hand: GitHub > Actions > "Build packages" > Run workflow.
+name: Build packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: "Version shown in the file names (e.g. 0.3). Empty = 0.0-build<run number>"
+        required: false
+        default: ""
+      publish_release:
+        description: "Also publish both packages as a GitHub Release"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write   # only used when publish_release is on
+
+env:
+  GODOT_VERSION: "4.7.2"
+  GODOT_TAG: "4.7.2-stable"
+  JAVA_FEATURE: "17"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('pdf_helper/**/*.gradle', 'pdf_helper/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Cache Godot
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/godot
+          key: godot-${{ env.GODOT_TAG }}
+
+      - name: Download Godot and export templates
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/godot && cd ~/godot
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_TAG}"
+          editor="Godot_v${GODOT_TAG}_linux.x86_64.zip"
+          templates="Godot_v${GODOT_TAG}_export_templates.tpz"
+          curl -fsSL -o "$editor" "$base/$editor"
+          curl -fsSL -o "$templates" "$base/$templates"
+          curl -fsSL -o SHA512-SUMS.txt "$base/SHA512-SUMS.txt"
+          grep -E " ($editor|$templates)\$" SHA512-SUMS.txt | sha512sum -c -
+          unzip -q "$editor" && rm "$editor"
+          mv "Godot_v${GODOT_TAG}_linux.x86_64" godot
+          mv "$templates" templates.tpz
+          chmod +x godot
+
+      - name: Install export templates
+        run: |
+          tdir="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$tdir"
+          unzip -q -o ~/godot/templates.tpz -d /tmp/templates
+          mv /tmp/templates/templates/* "$tdir/"
+          ls "$tdir" | grep -E 'linux_release.x86_64|windows_release_x86_64.exe'
+
+      - name: Download the Java runtimes to bundle
+        run: |
+          mkdir -p build/downloads && cd build/downloads
+          for os in linux windows; do
+            api="https://api.adoptium.net/v3/assets/latest/${JAVA_FEATURE}/hotspot?architecture=x64&image_type=jre&os=${os}&vendor=eclipse"
+            pkg=$(curl -fsSL "$api" | jq -c '.[0].binary.package')
+            name=$(echo "$pkg" | jq -r .name)
+            curl -fsSL -o "$name" "$(echo "$pkg" | jq -r .link)"
+            echo "$(echo "$pkg" | jq -r .checksum)  $name" | sha256sum -c -
+          done
+          ls -l
+
+      - name: Set version
+        id: version
+        env:
+          VERSION_INPUT: ${{ inputs.version_name }}
+        run: |
+          name=$(printf "%s" "$VERSION_INPUT" | tr -cd 'A-Za-z0-9._-')
+          if [ -z "$name" ]; then
+            name="0.0-build${{ github.run_number }}"
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "Building version $name"
+
+      - name: Build the PDF helper
+        working-directory: pdf_helper
+        run: |
+          chmod +x gradlew
+          ./gradlew copyJarToGodot --no-daemon --console=plain
+          ls -l ../app/helper/
+
+      - name: Import project
+        run: ~/godot/godot --headless --path app --import || true
+
+      - name: Export Linux and Windows builds
+        run: |
+          mkdir -p build/linux build/windows
+          # The headless export sometimes doesn't exit after writing the file, so cap its time.
+          timeout 10m ~/godot/godot --headless --path app --export-release "Linux" "$GITHUB_WORKSPACE/build/linux/PaperShelf.x86_64" || true
+          timeout 10m ~/godot/godot --headless --path app --export-release "Windows" "$GITHUB_WORKSPACE/build/windows/PaperShelf.exe" || true
+          test -s build/linux/PaperShelf.x86_64 || { echo "::error::Linux export was not created"; exit 1; }
+          test -s build/windows/PaperShelf.exe || { echo "::error::Windows export was not created"; exit 1; }
+          ls -l build/linux build/windows
+
+      - name: Package
+        run: |
+          cd pdf_helper
+          ./gradlew packageLinux packageWindows --no-daemon --console=plain
+          cd ../build
+          v="${{ steps.version.outputs.name }}"
+          mv PaperShelf-linux-x86_64.tar.gz "PaperShelf-$v-linux-x86_64.tar.gz"
+          mv PaperShelf-windows-x86_64.zip "PaperShelf-$v-windows-x86_64.zip"
+          # Quick checks: the app and Java must be executable in the Linux package.
+          tar -tvzf "PaperShelf-$v-linux-x86_64.tar.gz" | grep -E ' PaperShelf/(PaperShelf\.x86_64|runtime/bin/java)$' | grep -c '^-rwx' | grep -qx 2 \
+            || { echo "::error::Linux package lacks executable permissions"; exit 1; }
+          unzip -l "PaperShelf-$v-windows-x86_64.zip" | grep -qE 'PaperShelf/runtime/bin/javaw\.exe$' \
+            || { echo "::error::Windows package lacks the Java runtime"; exit 1; }
+          ls -l
+          echo "LINUX_PKG=$PWD/PaperShelf-$v-linux-x86_64.tar.gz" >> "$GITHUB_ENV"
+          echo "WINDOWS_PKG=$PWD/PaperShelf-$v-windows-x86_64.zip" >> "$GITHUB_ENV"
+
+      - name: Smoke test the Linux package
+        run: |
+          mkdir -p /tmp/smoke && tar -xzf "$LINUX_PKG" -C /tmp/smoke
+          # The bundled Java must start the helper and answer a ping.
+          echo '{"id":1,"cmd":"ping"}' | /tmp/smoke/PaperShelf/runtime/bin/java -jar /tmp/smoke/PaperShelf/helper/paperhelper.jar | tee /tmp/ping.txt
+          grep -q '"ok":true' /tmp/ping.txt
+          # The app itself must start, find the bundled Java and the helper, and quit.
+          /tmp/smoke/PaperShelf/PaperShelf.x86_64 --headless --verbose --quit-after 120 2>&1 | tee /tmp/app.txt || true
+          grep -q 'PDF helper ready' /tmp/app.txt || { echo "::error::The app did not start the PDF helper"; exit 1; }
+
+      - name: Upload Linux package
+        uses: actions/upload-artifact@v4
+        with:
+          name: PaperShelf-${{ steps.version.outputs.name }}-linux-x86_64
+          path: ${{ env.LINUX_PKG }}
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: PaperShelf-${{ steps.version.outputs.name }}-windows-x86_64
+          path: ${{ env.WINDOWS_PKG }}
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Publish GitHub Release
+        if: ${{ inputs.publish_release }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.name }}
+          name: PaperShelf ${{ steps.version.outputs.name }}
+          files: |
+            ${{ env.LINUX_PKG }}
+            ${{ env.WINDOWS_PKG }}
+          body: |
+            Built from ${{ github.sha }}. Both packages include their own Java runtime.
+
+            **Linux (x86_64):** unpack with `tar -xzf PaperShelf-${{ steps.version.outputs.name }}-linux-x86_64.tar.gz`, then run `PaperShelf/PaperShelf.x86_64` (`./install-desktop-entry.sh` adds a menu entry).
+            **Windows (x64):** unzip, then run `PaperShelf\PaperShelf.exe` (not code-signed: SmartScreen > More info > Run anyway).
+
+            Your library is kept outside the app folder (`~/.local/share/PaperShelf` or `%APPDATA%\PaperShelf`), so updating is just unpacking the new version.

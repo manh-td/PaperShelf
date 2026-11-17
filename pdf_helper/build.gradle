@@ -1,0 +1,117 @@
+plugins {
+    id 'org.jetbrains.kotlin.jvm' version '2.1.20'
+}
+
+kotlin {
+    jvmToolchain(17)
+}
+
+dependencies {
+    // Desktop Apache PDFBox 2.0.x: same API as the pdfbox-android port HighReader uses,
+    // so PaperAnalyzer behaves the same.
+    implementation 'org.apache.pdfbox:pdfbox:2.0.32'
+    implementation 'org.json:json:20240303'
+}
+
+// One self-contained jar: java -jar paperhelper.jar
+tasks.register('fatJar', Jar) {
+    archiveFileName = 'paperhelper.jar'
+    manifest { attributes 'Main-Class': 'com.papershelf.helper.MainKt' }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from sourceSets.main.output
+    dependsOn configurations.runtimeClasspath
+    from {
+        configurations.runtimeClasspath.findAll { it.name.endsWith('.jar') }.collect { zipTree(it) }
+    }
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
+}
+
+// Linux package: PaperShelf-linux-x86_64.tar.gz with the exported app, the helper jar
+// and a bundled Java runtime. Unix file modes are set here (and kept from the JRE
+// tarball), so the archive works when built on Windows.
+// Needs: ../build/linux/PaperShelf.x86_64 (Godot export) and the Adoptium JRE tarball
+// in ../build/downloads.
+tasks.register('packageLinux', Tar) {
+    dependsOn 'fatJar'
+    def jreTarballs = fileTree('../build/downloads') { include 'OpenJDK17U-jre_x64_linux_*.tar.gz' }
+    archiveFileName = 'PaperShelf-linux-x86_64.tar.gz'
+    destinationDirectory = file('../build')
+    compression = Compression.GZIP
+    duplicatesStrategy = DuplicatesStrategy.FAIL
+    doFirst {
+        if (!file('../build/linux/PaperShelf.x86_64').isFile()) throw new GradleException('Export the Linux build first (../build/linux/PaperShelf.x86_64).')
+        if (jreTarballs.files.size() != 1) throw new GradleException('Put exactly one Linux x64 JRE 17 tarball in ../build/downloads.')
+    }
+    into('PaperShelf') {
+        from('../build/linux/PaperShelf.x86_64') { filePermissions { unix(0755) } }
+        from('../app/icon.svg') { filePermissions { unix(0644) } }
+        from('../tools/linux/README.txt') { filePermissions { unix(0644) } }
+        from('../tools/linux/install-desktop-entry.sh') {
+            filePermissions { unix(0755) }
+            // A Windows checkout may turn LF into CRLF, which breaks the #! line.
+            filter(org.apache.tools.ant.filters.FixCrLfFilter, eol: org.apache.tools.ant.filters.FixCrLfFilter.CrLf.newInstance('lf'))
+        }
+        from(layout.buildDirectory.file('libs/paperhelper.jar')) {
+            into 'helper'
+            filePermissions { unix(0644) }
+        }
+        into('runtime') {
+            from({ tarTree(jreTarballs.singleFile) }) {
+                // Drop the JRE's own top folder (jdk-17.0.x+y-jre/). The path here already
+                // includes PaperShelf/runtime/, so remove that one segment only.
+                eachFile { f ->
+                    def segs = f.relativePath.segments as List
+                    def i = segs.findIndexOf { it.startsWith('jdk-') }
+                    if (i >= 0) {
+                        segs.remove(i)
+                        f.relativePath = new RelativePath(!f.directory, segs as String[])
+                    }
+                }
+                includeEmptyDirs = false
+            }
+        }
+    }
+}
+
+// Windows package: PaperShelf-windows-x86_64.zip with the exported app, the helper jar
+// and a bundled Java runtime.
+// Needs: ../build/windows/PaperShelf.exe (Godot export) and the Adoptium JRE zip in ../build/downloads.
+tasks.register('packageWindows', Zip) {
+    dependsOn 'fatJar'
+    def jreZips = fileTree('../build/downloads') { include 'OpenJDK17U-jre_x64_windows_*.zip' }
+    archiveFileName = 'PaperShelf-windows-x86_64.zip'
+    destinationDirectory = file('../build')
+    duplicatesStrategy = DuplicatesStrategy.FAIL
+    doFirst {
+        if (!file('../build/windows/PaperShelf.exe').isFile()) throw new GradleException('Export the Windows build first (../build/windows/PaperShelf.exe).')
+        if (jreZips.files.size() != 1) throw new GradleException('Put exactly one Windows x64 JRE 17 zip in ../build/downloads.')
+    }
+    into('PaperShelf') {
+        from('../build/windows/PaperShelf.exe')
+        from('../tools/windows/README.txt') {
+            filter(org.apache.tools.ant.filters.FixCrLfFilter, eol: org.apache.tools.ant.filters.FixCrLfFilter.CrLf.newInstance('crlf'))
+        }
+        from(layout.buildDirectory.file('libs/paperhelper.jar')) { into 'helper' }
+        into('runtime') {
+            from({ zipTree(jreZips.singleFile) }) {
+                // Drop the JRE's own top folder (jdk-17.0.x+y-jre/).
+                eachFile { f ->
+                    def segs = f.relativePath.segments as List
+                    def i = segs.findIndexOf { it.startsWith('jdk-') }
+                    if (i >= 0) {
+                        segs.remove(i)
+                        f.relativePath = new RelativePath(!f.directory, segs as String[])
+                    }
+                }
+                includeEmptyDirs = false
+            }
+        }
+    }
+}
+
+// Build the jar and copy it into the Godot project.
+tasks.register('copyJarToGodot', Copy) {
+    dependsOn 'fatJar'
+    from layout.buildDirectory.file('libs/paperhelper.jar')
+    into '../app/helper'
+}

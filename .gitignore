@@ -1,0 +1,16 @@
+# Godot
+app/.godot/
+*.translation
+
+# Built PDF helper (CI and tools/build_*.ps1 build it)
+app/helper/*.jar
+pdf_helper/build/
+pdf_helper/.gradle/
+pdf_helper/.kotlin/
+pdf_helper/local.properties
+
+# Build output and downloads (export templates, Java runtimes)
+build/
+
+# Test output
+tools/test_paper.pdf
