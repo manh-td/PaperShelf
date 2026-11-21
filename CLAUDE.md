@@ -28,6 +28,7 @@ app/                         Godot project (GL Compatibility renderer, user dir 
   tests/zoom_test.gd         Windowed: zoom (Ctrl+wheel, keys, top-bar control) survives the next sentence
   tests/selection_test.gd    Windowed: Free-mode drag selection, comment on it, click/Esc, categories
   tests/review_test.gd       Windowed: comments in each category -> locations -> review screen -> Markdown
+  tests/locations_test.gd    Windowed: locations in front matter (title, abstract, CCS) and sections
   tests/library_test.gd      Headless library model checks (scratch folder)
   tests/library_shots.gd     Windowed library run: import, collections, tags, open, trash (scratch folder)
   tests/sentences_sample.gd, mode_switch_drift.gd   From HighReader; run on a cache JSON
@@ -136,7 +137,9 @@ optionally, publishes a Release tagged `v<version>`.
 - Each comment's `where` comes from the reader (`_location_of`): numbered headings (Section /
   Subsection / Subsubsection) plus common unnumbered ones (Abstract, References, ...), the sentence
   number counted from the heading, and the page; figures/tables by their label. Updated on save
-  and whenever the paper opens (`set_comment_quiet`).
+  and whenever the paper opens (`set_comment_quiet`). Before the first heading: "Abstract, sentence N" when
+  `_find_abstract` finds an abstract without a heading (first run of 3 full-width text lines, up to
+  CCS Concepts / Keywords / Index Terms ...), "Title and authors" above it, "Front matter" after it.
 - Quotes never include "small" lines (margin line numbers are left out of the word index), and
   `pretty_quote` joins words split at a line end ("compre- hension" -> "compre-hension").
 

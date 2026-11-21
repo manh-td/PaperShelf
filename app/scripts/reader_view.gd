@@ -1275,6 +1275,12 @@ static var _float_name := RegEx.create_from_string("(?i)^(fig\\.?|figure|table|t
 var _loc_ready := false
 var _loc_heads: Array = []      # [{"key", "level", "label"}] in reading order
 var _loc_steps: Array = []      # sentence steps over `lines` (for sentence numbers)
+var _abs_start := -1           # the abstract (when it has no heading): keys [start, end)
+var _abs_end := -1
+
+## Lines that end the abstract in the front matter (ACM, IEEE and similar layouts).
+static var _front_stop := RegEx.create_from_string(
+	"(?i)^(ccs concepts|additional key ?words|key ?words|index terms|acm reference format|general terms|categories and subject)")
 
 
 func _build_location_index() -> void:
@@ -1291,7 +1297,43 @@ func _build_location_index() -> void:
 		elif _named_section.search(text):
 			_loc_heads.append({"key": key, "level": 1, "label": text})
 	_loc_steps = Steps.build_sentence_steps(lines, words)
+	_find_abstract()
 	_loc_ready = true
+
+
+## The abstract of a paper whose abstract has no heading (e.g. ACM): before the first heading,
+## the first run of three full-width text lines, up to "CCS Concepts", "Keywords" and the like.
+func _find_abstract() -> void:
+	_abs_start = -1
+	_abs_end = -1
+	var first_head: int = int(_loc_heads[0]["key"]) if not _loc_heads.is_empty() else (1 << 40)
+	var run := 0
+	var start_idx := -1
+	for idx in lines.size():
+		var l: Dictionary = lines[idx]
+		var key := int(l["i"]) * KEY_SCALE
+		if key >= first_head:
+			break
+		var t := String(l.get("t", ""))
+		var wide := float(l["x1"]) - float(l["x0"]) >= 0.45
+		if l.get("k", "") == "body" and wide and t.split(" ", false).size() >= 6 and not _front_stop.search(t):
+			run += 1
+			if run == 3:
+				start_idx = idx - 2
+				break
+		else:
+			run = 0
+	if start_idx < 0:
+		return
+	_abs_start = int(lines[start_idx]["i"]) * KEY_SCALE
+	_abs_end = first_head
+	for idx in range(start_idx, lines.size()):
+		var key := int(lines[idx]["i"]) * KEY_SCALE
+		if key >= first_head:
+			break
+		if _front_stop.search(String(lines[idx].get("t", ""))):
+			_abs_end = key
+			break
 
 
 ## Sentence id (number in the whole text) of the sentence step containing `key`.
@@ -1325,6 +1367,19 @@ func _location_of(c: Dictionary) -> String:
 		parts.append(m.get_string(0).strip_edges() if m else "Figure")
 		if not path.is_empty():
 			parts.append("in " + ", ".join(path))
+	elif path.is_empty():
+		# Before the first heading: the abstract (sentences counted from its start), the
+		# title and authors above it, or the rest of the front matter (keywords, CCS ...).
+		if _abs_start >= 0 and s >= _abs_start and s < _abs_end:
+			var base := _sid_at(_abs_start) - 1
+			var a := _sid_at(s) - base
+			var b := _sid_at(mini(e, _abs_end - 1)) - base
+			parts.append("Abstract")
+			parts.append("sentence %d" % a if b <= a else "sentences %d–%d" % [a, b])
+		elif _abs_start >= 0 and s < _abs_start:
+			parts.append("Title and authors")
+		else:
+			parts.append("Front matter")
 	else:
 		parts.append_array(path)
 		if head_key >= 0 and s > head_key + KEY_SCALE - 1:
