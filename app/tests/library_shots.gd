@@ -131,6 +131,31 @@ func _run() -> void:
 	await _wait(0.3)
 	await _shot("back_in_library")
 
+	# Clear cache: the paper just read has a cached analysis. The button asks first, removes it,
+	# and the paper still opens afterwards (analyzed again).
+	var opened_id: String = main._reader.doc_id
+	var had: int = int(Library.cache_info()["files"])
+	lib_view.ask_clear_cache()
+	await _wait(0.2)
+	var asked: bool = lib_view._confirm.visible and lib_view._confirm.dialog_text.begins_with("Remove the cached data")
+	print(("ok    " if asked else "FAIL  ") + "Clear cache asks first (%d cached files)" % had)
+	lib_view._confirm.hide()
+	if asked:
+		lib_view._confirm_action.call()
+	var cleared: bool = had > 0 and int(Library.cache_info()["files"]) == 0
+	print(("ok    " if cleared else "FAIL  ") + "cache cleared; status: " + lib_view._status.text)
+	main.open_paper(opened_id)
+	var t1 := Time.get_ticks_msec()
+	while not main._reader.visible and Time.get_ticks_msec() - t1 < 20000:
+		await process_frame
+	var reopened: bool = main._reader.visible and int(Library.cache_info([opened_id])["files"]) == 1
+	print(("ok    " if reopened else "FAIL  ") + "the paper opens again and is re-analyzed after clearing")
+	await _key(KEY_ESCAPE)
+	await _wait(0.3)
+	if not (asked and cleared and reopened):
+		quit(1)
+		return
+
 	_select_rows([1])
 	await _key(KEY_DELETE)
 	print("after delete: view=", lib_view._view, " trash=", Library.count("trash"))

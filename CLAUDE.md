@@ -149,6 +149,8 @@ optionally, publishes a Release tagged `v<version>`.
   `can_add_subcollection` / `can_move_collection`); deleting a collection
   keeps its papers; Trash, then Delete permanently (removes the copy, cache and progress).
 - Import copies the file, skips duplicates by MD5, and asks the helper (`info`) for a title.
+- Clear cache (toolbar; paper menu for selected papers): `clear_cache(ids)` removes cache/*.json
+  (and tmp/ when clearing all, incl. leftovers of deleted papers); nothing else is touched.
 - Views: "all", "unfiled", "trash", "c:<id>"; tag filter is AND; search matches title, tags, file name.
 - Keys: Enter open, Delete trash, F2 rename, Ctrl+O / Ctrl+Shift+O import, Ctrl+F search, Ctrl+N new collection.
 - Tests use `Library.load_from(<scratch dir>)` so the real library is never touched.

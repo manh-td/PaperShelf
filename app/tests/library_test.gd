@@ -90,6 +90,23 @@ func _run() -> void:
 	check(lib.collection(related).is_empty(), "deleting a collection deletes its subcollections")
 	check(lib.query("all").size() == 2, "papers stay after deleting a collection")
 
+	# Cached data: per paper, everything (incl. leftovers of deleted papers and tmp images).
+	DirAccess.make_dir_recursive_absolute(dir.path_join("cache"))
+	DirAccess.make_dir_recursive_absolute(dir.path_join("tmp"))
+	var cache_files := [String(p1["file"]).get_file() + "_100_v18.json", String(p2["file"]).get_file() + "_200_v18.json",
+		"p999.pdf_5_v18.json"]
+	for f in cache_files:
+		FileAccess.open(dir.path_join("cache").path_join(f), FileAccess.WRITE).store_string("{}")
+	FileAccess.open(dir.path_join("tmp/render_1.rgba"), FileAccess.WRITE).store_string("xx")
+	check(int(lib.cache_info()["files"]) == 4, "cache_info counts analysis files and tmp images")
+	check(int(lib.cache_info([p1["id"]])["files"]) == 1, "cache_info for one paper counts only its file")
+	lib.save_comment(p1["id"], {"kind": "text", "s": 0, "e": 0, "quote": "x", "text": "keep me", "subs": []})
+	var c_before: int = lib.comments(p1["id"]).size()
+	check(int(lib.clear_cache([p1["id"]])["files"]) == 1 and int(lib.cache_info()["files"]) == 3, "clearing one paper's cache leaves the others")
+	check(int(lib.clear_cache()["files"]) == 3 and int(lib.cache_info()["files"]) == 0, "clearing everything removes the rest (incl. leftovers)")
+	check(FileAccess.file_exists(lib.paper_path(p1)) and lib.papers.size() == 2 and lib.comments(p1["id"]).size() == c_before,
+		"papers and comments are kept")
+
 	# Reload from disk.
 	lib.load_from(dir)
 	check(lib.papers.size() == 2 and lib.collections.size() == 1, "reload from library.json")

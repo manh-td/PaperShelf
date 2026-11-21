@@ -309,6 +309,60 @@ func empty_trash() -> void:
 	delete_permanently(papers.filter(func(p): return p["trashed"]).map(func(p): return p["id"]))
 
 
+# ------------------------------------------------------------------ cache
+#
+# Cached data is only a speed-up: the page analysis of each paper (cache/<file>_<size>_v<N>.json,
+# made again when the paper is next opened) and leftover page images (tmp/). Clearing it
+# never touches papers, comments, reviews, tags or reading positions.
+
+func _cache_files(ids: Array = []) -> PackedStringArray:
+	var out := PackedStringArray()
+	var cache := _root.path_join("cache")
+	if DirAccess.dir_exists_absolute(cache):
+		var prefixes: Array = []
+		for id in ids:
+			var p := paper(id)
+			if not p.is_empty():
+				prefixes.append(String(p["file"]).get_file() + "_")
+		for f in DirAccess.get_files_at(cache):
+			if ids.is_empty() or prefixes.any(func(px): return f.begins_with(px)):
+				out.append(cache.path_join(f))
+	var tmp := _root.path_join("tmp")
+	if ids.is_empty() and DirAccess.dir_exists_absolute(tmp):
+		for f in DirAccess.get_files_at(tmp):
+			out.append(tmp.path_join(f))
+	return out
+
+
+## {"files": count, "bytes": total size} of the cached data (of `ids` only, if given).
+func cache_info(ids: Array = []) -> Dictionary:
+	var total := 0
+	var files := _cache_files(ids)
+	for f in files:
+		total += FileAccess.get_size(f)
+	return {"files": files.size(), "bytes": total}
+
+
+## Removes the cached data (of `ids` only, if given). Returns {"files", "bytes"} removed.
+func clear_cache(ids: Array = []) -> Dictionary:
+	var removed := 0
+	var bytes := 0
+	for f in _cache_files(ids):
+		var size := FileAccess.get_size(f)
+		if DirAccess.remove_absolute(f) == OK:
+			removed += 1
+			bytes += size
+	return {"files": removed, "bytes": bytes}
+
+
+static func size_text(bytes: int) -> String:
+	if bytes < 1024:
+		return "%d bytes" % bytes
+	if bytes < 1024 * 1024:
+		return "%d KB" % int(ceil(bytes / 1024.0))
+	return "%.1f MB" % (bytes / 1048576.0)
+
+
 # ------------------------------------------------------------------ tags
 
 static func clean_tag(tag: String) -> String:

@@ -37,6 +37,10 @@ outside the app folder, so updating is just unpacking the new version.
 
 Drag papers onto a collection to file them; drop PDFs or folders on the window to import.
 
+**Clear cache…** (library toolbar) removes the cached page analysis; papers, comments, reviews,
+tags and reading positions are kept, and each paper is analyzed again when next opened.
+Right-click papers > **Clear cached analysis** does it for just those papers.
+
 ## Comments
 
 While reading, just start typing: the comment goes on the highlighted sentence (or line,

@@ -806,6 +806,7 @@ func _on_list_rmb(pos: Vector2, button: int) -> void:
 		_paper_menu.add_item("Open", 0)
 		_paper_menu.set_item_disabled(_paper_menu.get_item_index(0), ids.size() != 1)
 		_paper_menu.add_item("Show file in folder", 1)
+		_paper_menu.add_item("Clear cached analysis", 5)
 		_paper_menu.add_separator()
 		_menu_collections = _flat_collections()
 		for i in _menu_collections.size():
@@ -834,6 +835,10 @@ func _on_paper_menu(id: int) -> void:
 			Library.remove_from_collection(ids, _view.substr(2))
 		4:
 			Library.trash(ids)
+		5:
+			var r := Library.clear_cache(ids)
+			set_busy("Removed the cached analysis of %d paper%s (%s). %s analyzed again when opened." % [
+				ids.size(), "" if ids.size() == 1 else "s", Library.size_text(int(r["bytes"])), "It is" if ids.size() == 1 else "They are"])
 		10:
 			Library.restore(ids)
 		11:
@@ -923,7 +928,7 @@ func _build() -> void:
 	tools.add_child(app)
 	tools.add_child(_spacer_h(12))
 	for spec in [["Import PDFs…", "Ctrl+O", import_files_dialog], ["Import folder…", "Ctrl+Shift+O", import_folder_dialog],
-			["New collection", "Ctrl+N", new_collection]]:
+			["New collection", "Ctrl+N", new_collection], ["Clear cache…", "Remove cached page analysis (papers, comments and reviews are kept)", ask_clear_cache]]:
 		var b := _button(spec[0], spec[2])
 		b.tooltip_text = spec[1]
 		b.focus_mode = Control.FOCUS_NONE
@@ -1132,3 +1137,18 @@ func _spacer_h(w: int) -> Control:
 	var s := Control.new()
 	s.custom_minimum_size.x = w
 	return s
+
+
+# ------------------------------------------------------------------ cache
+
+## Asks before removing all cached data (page analysis and leftover page images).
+func ask_clear_cache() -> void:
+	var info := Library.cache_info()
+	if int(info["files"]) == 0:
+		set_busy("There is no cached data to remove.")
+		return
+	_ask("Remove the cached data (%d file%s, %s)?\n\nYour papers, comments, reviews, tags and reading positions are kept. Each paper's page layout is analyzed again the next time you open it." % [
+		int(info["files"]), "" if int(info["files"]) == 1 else "s", Library.size_text(int(info["bytes"]))],
+		"Remove", func():
+			var r := Library.clear_cache()
+			set_busy("Removed %d cached file%s (%s)." % [int(r["files"]), "" if int(r["files"]) == 1 else "s", Library.size_text(int(r["bytes"]))]))
