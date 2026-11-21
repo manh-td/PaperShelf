@@ -23,6 +23,7 @@ app/                         Godot project (GL Compatibility renderer, user dir 
   tests/panel_scroll_test.gd Windowed: wheel/touchpad over open Contents/Settings must not move the page
   tests/details_shot.gd      Windowed: screenshot of the details pane for a paper with no tags/collections
   tests/comment_test.gd      Windowed: commenting by typing, categories, points, edit, delete, re-attach
+  tests/zoom_test.gd         Windowed: zoom (Ctrl+wheel, keys, top-bar control) survives the next sentence
   tests/library_test.gd      Headless library model checks (scratch folder)
   tests/library_shots.gd     Windowed library run: import, collections, tags, open, trash (scratch folder)
   tests/sentences_sample.gd, mode_switch_drift.gd   From HighReader; run on a cache JSON
@@ -90,7 +91,9 @@ optionally, publishes a Release tagged `v<version>`.
 
 - Same modes and steps as HighReader. Zoom is `view_scale` (px per page width); fits:
   `column` (default: the column fills READ_WIDTH * zoom), `text` (the highlight does), `width`, `page`.
-  Figures always fit their region. `follow`: `center` keeps the highlight at 40% height, `minimal` scrolls only near the edges.
+  The zoom level (`zoom`, and `float_zoom` for Figures mode) is kept across steps and saved: Ctrl+wheel,
+  pinch, Ctrl+=/−/0 and the top-bar `− 100% +` control all change it. Figures always fit their region
+  (times `float_zoom`). `follow`: `center` keeps the highlight at 40% height, `minimal` scrolls only near the edges.
 - Keys: →/↓/Space/Enter next, ←/↑/Shift+Space/Backspace back, PgDn/PgUp page, Home/End,
   Ctrl+1-4 mode, Ctrl+=/−/0 zoom, Tab contents, Ctrl+, settings, Ctrl+↓/↑ next/previous comment,
   Esc back. Any other printable key starts a comment, so plain letters/digits must never be shortcuts. Wheel steps (scrolls in Free), Ctrl+wheel zooms,

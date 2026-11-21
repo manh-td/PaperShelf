@@ -37,6 +37,7 @@ const DEFAULTS := {
 	"fit": "column",
 	"follow": "center",
 	"zoom": 1.0,
+	"float_zoom": 1.0,   # Figures mode keeps its own zoom
 	"color": Color(1.0, 0.80, 0.10),
 	"color_by_kind": true,
 	"style": "box",
@@ -93,6 +94,9 @@ var _status: Label
 var _hint: Label
 var _bar: ProgressBar
 var _mode_btn: OptionButton
+var _zoom_minus: Button
+var _zoom_label: Button
+var _zoom_plus: Button
 var _notice: Label
 var _settings: SettingsPanel
 var _contents: ContentsPanel
@@ -221,6 +225,7 @@ func set_mode(mode: String) -> void:
 func _set_mode(mode: String, key: int, animate: bool) -> void:
 	_mode_btn.select(MODES.find(mode))
 	_active_mode = mode
+	_update_zoom_label()
 	_anchor = key
 	match mode:
 		"sentence":
@@ -369,20 +374,44 @@ func jump_to_contents(index: int) -> void:
 		_go_to_step(_step_at_key(int(line["i"]) * KEY_SCALE))
 
 
-## Zoom: +1 bigger, -1 smaller, 0 back to normal.
+## Zoom: +1 bigger, -1 smaller, 0 back to normal. The level is kept for the following steps
+## (and saved); Figures mode has its own level.
 func change_zoom(dir: int) -> void:
 	if _active_mode == "free":
 		var center := size / 2.0
 		var before := cam + center / view_scale
 		view_scale = clamp(view_scale * (1.15 if dir > 0 else 1.0 / 1.15) if dir != 0 else _page_fit_scale(), 50.0, 30000.0)
 		cam = before - center / view_scale
+		_update_zoom_label()
+		_update_status()
 		return
-	var z: float = cfg["zoom"]
-	z = 1.0 if dir == 0 else clamp(z * (1.1 if dir > 0 else 1.0 / 1.1), 0.4, 4.0)
-	cfg["zoom"] = z
+	var key := _zoom_key()
+	var z: float = cfg[key]
+	z = 1.0 if dir == 0 else clamp(z * (1.1 if dir > 0 else 1.0 / 1.1), MIN_ZOOM, MAX_ZOOM)
+	cfg[key] = z
 	_save_settings()
+	_update_zoom_label()
 	_go_to_current(true)
-	_flash("Zoom %d%%" % int(round(z * 100)))
+
+
+const MIN_ZOOM := 0.4
+const MAX_ZOOM := 4.0
+
+
+## The setting that holds the zoom of the current mode.
+func _zoom_key() -> String:
+	return "float_zoom" if _active_mode == "floats" else "zoom"
+
+
+func _update_zoom_label() -> void:
+	if _zoom_label == null:
+		return
+	var pct: float
+	if _active_mode == "free":
+		pct = view_scale / max(_page_fit_scale(), 1.0)
+	else:
+		pct = float(cfg[_zoom_key()])
+	_zoom_label.text = "%d%%" % int(round(pct * 100))
 
 
 # ------------------------------------------------------------------ framing
@@ -427,7 +456,7 @@ func _go_to_current(animate: bool) -> void:
 			focus = focus.merge(rects[i][1])
 
 	var usable := _usable()
-	var zoom: float = cfg["zoom"]
+	var zoom: float = cfg["float_zoom"] if is_float else cfg["zoom"]
 	var read_w: float = min(usable.size.x * 0.96, READ_WIDTH * zoom)
 	var pr := page_rects[page]
 	var s := view_scale
@@ -437,7 +466,8 @@ func _go_to_current(animate: bool) -> void:
 	match fit:
 		"float":
 			s = min(usable.size.x * 0.92 / max(focus.size.x, 0.01), usable.size.y * 0.85 / max(focus.size.y, 0.01))
-			s = min(s, READ_WIDTH * 2.5 * zoom)
+			# Fit the figure, capped for tiny ones; the Figures zoom scales that.
+			s = min(s, READ_WIDTH * 2.5) * zoom
 		"text":
 			# The highlight fills the reading width. Very tall steps are fitted by height.
 			var line_h: float = rects[0][1].size.y
@@ -861,12 +891,22 @@ func _on_click(pos: Vector2) -> void:
 		_go_to_current(true)
 
 
+## Ctrl+wheel / pinch zoom around a screen point. In the reading modes this changes the
+## mode's zoom level too, so the next step keeps it.
 func _zoom_at(screen_pos: Vector2, factor: float) -> void:
 	if _tween:
 		_tween.kill()
+	if _active_mode != "free" and not steps.is_empty():
+		var key := _zoom_key()
+		var z: float = cfg[key]
+		var nz: float = clamp(z * factor, MIN_ZOOM, MAX_ZOOM)
+		factor = nz / z
+		cfg[key] = nz
+		_save_settings()
 	var before := _to_doc(screen_pos)
 	view_scale = clamp(view_scale * factor, 50.0, 30000.0)
 	cam = before - screen_pos / view_scale
+	_update_zoom_label()
 	if _mode() == "free":
 		_update_status()
 
@@ -1255,7 +1295,8 @@ func _open_settings() -> void:
 func _on_setting_changed(key: String, value: Variant) -> void:
 	cfg[key] = value
 	_save_settings()
-	if key in ["fit", "follow", "zoom"] and _mode() != "free":
+	_update_zoom_label()
+	if key in ["fit", "follow", "zoom", "float_zoom"] and _mode() != "free":
 		_go_to_current(true)
 	elif key == "skip_side":
 		var anchor := _current_key()
@@ -1299,6 +1340,21 @@ func _build_ui() -> void:
 		_mode_btn.add_item("%s  (Ctrl+%d)" % [MODE_NAMES[i], i + 1])
 	_mode_btn.item_selected.connect(func(i): set_mode(MODES[i]))
 	row.add_child(_mode_btn)
+
+	# Zoom: − 100% +  (click the percentage for 100%). Kept for the following steps.
+	var zoom_box := HBoxContainer.new()
+	zoom_box.add_theme_constant_override("separation", 2)
+	_zoom_minus = _bar_button("−", func(): change_zoom(-1))
+	_zoom_minus.tooltip_text = "Zoom out (Ctrl+−, or Ctrl+wheel)"
+	zoom_box.add_child(_zoom_minus)
+	_zoom_label = _bar_button("100%", func(): change_zoom(0))
+	_zoom_label.tooltip_text = "Back to 100% (Ctrl+0)"
+	_zoom_label.custom_minimum_size.x = 64
+	zoom_box.add_child(_zoom_label)
+	_zoom_plus = _bar_button("+", func(): change_zoom(1))
+	_zoom_plus.tooltip_text = "Zoom in (Ctrl+=, or Ctrl+wheel)"
+	zoom_box.add_child(_zoom_plus)
+	row.add_child(zoom_box)
 
 	var contents_btn := _bar_button("Contents", _open_contents)
 	contents_btn.tooltip_text = "Headings (Tab)"

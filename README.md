@@ -27,7 +27,7 @@ outside the app folder, so updating is just unpacking the new version.
 | Delete | move to Trash | ← / Shift+Space | back |
 | F2 | rename | PageDown / PageUp | next / previous page |
 | Ctrl+O | import PDFs | Ctrl+1 2 3 4 | Sentence / Line / Figures / Free |
-| Ctrl+Shift+O | import a folder | Ctrl+= / Ctrl+− / Ctrl+0 | zoom |
+| Ctrl+Shift+O | import a folder | Ctrl+wheel, Ctrl+= / Ctrl+− / Ctrl+0 | zoom (kept as you read on) |
 | Ctrl+F | search | Tab | contents |
 | Ctrl+N | new collection | Ctrl+, | settings |
 | F11 | fullscreen | Ctrl+↓ / Ctrl+↑ | next / previous comment |
