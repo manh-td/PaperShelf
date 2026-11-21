@@ -1,6 +1,7 @@
 package com.papershelf.helper
 
 import org.apache.pdfbox.pdmodel.PDDocument
+import org.apache.pdfbox.pdmodel.font.PDFont
 import org.apache.pdfbox.text.PDFTextStripper
 import org.apache.pdfbox.text.TextPosition
 import org.json.JSONArray
@@ -29,7 +30,7 @@ import kotlin.math.roundToInt
  * bump VERSION whenever the output changes.
  */
 object PaperAnalyzer {
-    const val VERSION = 17
+    const val VERSION = 18
 
     // Column codes in the output.
     private const val COL_FULL = 0
@@ -71,8 +72,38 @@ object PaperAnalyzer {
         val gutters: List<Float> = emptyList(),
     )
 
+    // Bold font names. Besides "Bold": TeX/URW names (CMBX, Times bold "Medi", "Demi"),
+    // Linux Libertine/Biolinum ("LinBiolinumTB", "LinLibertineTZ" = semibold; ACM papers), "Bd".
+    private val boldName = Regex("Bold|Black|Heavy|Semibold|Demi|CMBX|CMSSBX|SFBX|\\.B$|-B$|-Bd|Bd$|-Medi$", RegexOption.IGNORE_CASE)
+    private val texBoldName = Regex("Lin(Libertine|Biolinum)[A-Z]*T(B|Z)")
+
+    /** "3.1 Setup", "IV. Results", "A. Proofs": a numbered section title. */
+    private val numberedHeading = Regex("^(\\d+(\\.\\d+)*\\.?|[IVX]+\\.|[A-Z]\\.)\\s+\\S")
+
+    /**
+     * An unnumbered bold line that reads like a title ("Abstract", "Data Availability"), not
+     * bold code ("else", "end if"), math symbols, run-in labels ("ACM Reference Format:")
+     * or marks ("*Speaker.").
+     */
+    private fun looksLikeTitle(text: String): Boolean {
+        val t = text.trim()
+        return t.isNotEmpty() && t[0].isUpperCase() && t.count { it.isLetter() } >= 3 && !t.endsWith(":")
+    }
+
+    /** Bold from the font's name, its declared weight, or (when neither says) a thick stem width. */
+    private fun isBold(font: PDFont, rawName: String): Boolean {
+        val name = rawName.substringAfter('+')
+        if (boldName.containsMatchIn(name) || texBoldName.containsMatchIn(name)) return true
+        val d = try { font.fontDescriptor } catch (_: Exception) { null } ?: return false
+        if (d.isForceBold || d.fontWeight >= 600f) return true
+        // Some fonts declare no weight (0) but give the vertical stem width: about 70-90 for
+        // regular text faces, 120+ for bold ones.
+        return d.fontWeight <= 0f && d.stemV >= 120f
+    }
+
     private class WordStripper : PDFTextStripper() {
         val words = ArrayList<Word>()
+        private val boldCache = HashMap<PDFont, Boolean>()
 
         override fun writeString(text: String, textPositions: MutableList<TextPosition>) {
             var run = ArrayList<TextPosition>()
@@ -105,9 +136,9 @@ object PaperAnalyzer {
                 bottom = max(bottom, tp.yDirAdj + fs * 0.22f)
                 if (fs >= size) { size = fs; baseline = tp.yDirAdj }
             }
-            val fontName = try { run[0].font?.name ?: "" } catch (_: Exception) { "" }
-            val bold = fontName.contains("Bold", true) || fontName.contains("Black", true) ||
-                Regex("CMBX|\\.B$|-B$|Semibold|Heavy", RegexOption.IGNORE_CASE).containsMatchIn(fontName)
+            val font = try { run[0].font } catch (_: Exception) { null }
+            val fontName = try { font?.name ?: "" } catch (_: Exception) { "" }
+            val bold = font != null && boldCache.getOrPut(font) { isBold(font, fontName) }
             val mono = Regex("Mono|Courier|Consol|Inconsolata|CMTT|Code", RegexOption.IGNORE_CASE).containsMatchIn(fontName)
             words.add(Word(run.joinToString("") { it.unicode }, x0, top, x1, bottom, baseline, size, bold, mono))
         }
@@ -438,8 +469,7 @@ object PaperAnalyzer {
             hist[k] = (hist[k] ?: 0) + w.text.length
         }
         val bodySize = (hist.maxByOrNull { it.value }?.key ?: 20) / 2f
-        val caption = Regex("^(fig\\.?|figure|table|tab\\.|algorithm|listing)\\s*[\\dIVX]+[a-z]?\\s*([:.|â€”â€“-]|$)", RegexOption.IGNORE_CASE)
-        val numberedHeading = Regex("^(\\d+(\\.\\d+)*\\.?|[IVX]+\\.|[A-Z]\\.)\\s+\\S")
+        val caption = Regex("^(fig\\.?|figure|table|tab\\.|algorithm|listing)\\s*[\\dIVX]+[a-z]?\\s*([:.|—–-]|$)", RegexOption.IGNORE_CASE)
 
         for (p in pages) {
             // Columns whose upper part is mostly body-size text. Small text at the bottom of
@@ -460,7 +490,7 @@ object PaperAnalyzer {
                     caption.containsMatchIn(text) -> { l.captionStart = true; "caption" }
                     l.mainSize >= bodySize * 1.15f -> "heading"
                     l.boldShare > 0.6f && text.length < 90 &&
-                        (numberedHeading.containsMatchIn(text) || text.length < 40) -> "heading"
+                        (numberedHeading.containsMatchIn(text) || (text.length < 40 && looksLikeTitle(text))) -> "heading"
                     l.mainSize < bodySize * 0.8f && width < p.w * 0.2f && l.col !in textCols -> "small"
                     // Footnotes, copyright and license boxes at the bottom of the page.
                     l.mainSize < bodySize * 0.92f && l.y0 > p.h * 0.75f && l.col in bodyCols -> "footnote"
@@ -530,8 +560,11 @@ object PaperAnalyzer {
                 val rx0 = ra - p.w * 0.01f
                 val rx1 = rb + p.w * 0.01f
                 fun overlaps(l: Line) = l.x1 > rx0 + 2f && l.x0 < rx1 - 2f
+                // A section title right below a table ends it, like a paragraph does.
+                fun isSectionTitle(l: Line) = l.kind == "heading" && l.mainSize >= bodySize * 0.95f &&
+                    numberedHeading.containsMatchIn(l.text)
                 fun isBoundary(l: Line) = overlaps(l) && l !in block &&
-                    (isParagraph(l) || l.kind == "caption")
+                    (isParagraph(l) || l.kind == "caption" || isSectionTitle(l))
 
                 val upBound = lines.filter { isBoundary(it) && it.y1 <= by0 + 1f }.maxOfOrNull { it.y1 } ?: (p.h * 0.06f)
                 val downBound = lines.filter { isBoundary(it) && it.y0 >= by1 - 1f }.minOfOrNull { it.y0 } ?: (p.h * 0.94f)
@@ -571,7 +604,7 @@ object PaperAnalyzer {
                         fy0 = min(fy0, l.y0); fy1 = max(fy1, l.y1)
                     }
                 }
-                // Small notes right under the float (e.g. "â€  Fine-tuned on ...") belong to it.
+                // Small notes right under the float (e.g. "† Fine-tuned on ...") belong to it.
                 var grew = true
                 while (grew) {
                     grew = false

@@ -340,6 +340,9 @@ func _details_one(p: Dictionary) -> void:
 		_size_text(int(p.get("size", 0))), _date(int(p["added"]))]
 	var v := _progress_value(p)
 	info += "\n" + ("Not read yet" if v < 0 else "Read %d%%, last opened %s" % [int(round(v * 100)), _date(int(p["last_read"]))])
+	var n_comments: int = p.get("comments", []).size()
+	if n_comments > 0:
+		info += "  ·  %d comment%s" % [n_comments, "" if n_comments == 1 else "s"]
 	var info_l := _label(info, 14)
 	info_l.modulate = Color(1, 1, 1, 0.65)
 	_details.add_child(info_l)
@@ -404,6 +407,8 @@ func _tag_chips(ids: Array, tags: Array) -> Control:
 	var flow := HFlowContainer.new()
 	if tags.is_empty():
 		var none := _label("No tags", 14)
+		# Inside a flow container a wrapping label gets almost no width (one letter per line).
+		none.autowrap_mode = TextServer.AUTOWRAP_OFF
 		none.modulate = Color(1, 1, 1, 0.45)
 		flow.add_child(none)
 	for t in tags:
@@ -436,6 +441,8 @@ func _collection_chips(ids: Array, cids: Array) -> Control:
 	var flow := HFlowContainer.new()
 	if cids.is_empty():
 		var none := _label("Not in any collection", 14)
+		# Inside a flow container a wrapping label gets almost no width (one letter per line).
+		none.autowrap_mode = TextServer.AUTOWRAP_OFF
 		none.modulate = Color(1, 1, 1, 0.45)
 		flow.add_child(none)
 	for cid in cids:
@@ -548,10 +555,16 @@ func _ask_name(title: String, initial: String, action: Callable) -> void:
 
 func new_collection() -> void:
 	var parent := _view.substr(2) if _view.begins_with("c:") else ""
+	if not Library.can_add_subcollection(parent):
+		set_busy("Can't add a subcollection to \"%s\": collections can be nested at most %d levels deep." % [
+			Library.collection(parent)["name"], Library.MAX_NESTING])
+		return
 	var title := "New collection" if parent.is_empty() else "New subcollection in \"%s\"" % Library.collection(parent)["name"]
 	_ask_name(title, "", func(n):
 		if not String(n).strip_edges().is_empty():
 			var id := Library.add_collection(n, parent)
+			if id.is_empty():
+				return
 			_collapsed[parent] = false
 			_view = "c:" + id)
 
@@ -744,10 +757,10 @@ func _coll_can_drop(pos: Vector2, data: Variant) -> bool:
 		return target.begins_with("c:") or target == "trash"
 	if data["type"] == "collection":
 		if target == "all":
-			return true
+			return Library.can_move_collection(data["id"], "")
 		if target.begins_with("c:"):
-			var t := target.substr(2)
-			return t != data["id"] and not t in Library.descendants(data["id"])
+			# Refuses cycles and nesting deeper than Library.MAX_NESTING.
+			return Library.can_move_collection(data["id"], target.substr(2))
 	return false
 
 
@@ -838,6 +851,9 @@ func _on_coll_rmb(pos: Vector2, button: int) -> void:
 		_coll_menu.set_item_disabled(0, Library.count("trash") == 0)
 	elif view.begins_with("c:"):
 		_coll_menu.add_item("New subcollection…", 0)
+		if not Library.can_add_subcollection(view.substr(2)):
+			_coll_menu.set_item_disabled(_coll_menu.get_item_index(0), true)
+			_coll_menu.set_item_tooltip(_coll_menu.get_item_index(0), "Collections nest at most %d levels deep" % Library.MAX_NESTING)
 		_coll_menu.add_item("Rename…", 1)
 		_coll_menu.add_item("Delete collection…", 2)
 		_coll_menu.add_separator()
@@ -912,7 +928,7 @@ func _build() -> void:
 	grow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tools.add_child(grow)
 	_search_edit = LineEdit.new()
-	_search_edit.placeholder_text = "Search titles and tags  (Ctrl+F)"
+	_search_edit.placeholder_text = "Search titles, tags and comments  (Ctrl+F)"
 	_search_edit.custom_minimum_size.x = 320
 	_search_edit.clear_button_enabled = true
 	_search_edit.text_changed.connect(func(t):

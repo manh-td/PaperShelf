@@ -23,16 +23,26 @@ outside the app folder, so updating is just unpacking the new version.
 
 | Library | | Reader | |
 |---|---|---|---|
-| Enter | open | → / Space | next sentence |
+| Enter | open | → / Space / Enter | next sentence |
 | Delete | move to Trash | ← / Shift+Space | back |
 | F2 | rename | PageDown / PageUp | next / previous page |
-| Ctrl+O | import PDFs | 1 2 3 4 | Sentence / Line / Figures / Free |
-| Ctrl+Shift+O | import a folder | + − 0 | zoom |
-| Ctrl+F | search | C | contents |
-| Ctrl+N | new collection | S | settings |
-| F11 | fullscreen | Esc | back to the library |
+| Ctrl+O | import PDFs | Ctrl+1 2 3 4 | Sentence / Line / Figures / Free |
+| Ctrl+Shift+O | import a folder | Ctrl+= / Ctrl+− / Ctrl+0 | zoom |
+| Ctrl+F | search | Tab | contents |
+| Ctrl+N | new collection | Ctrl+, | settings |
+| F11 | fullscreen | Ctrl+↓ / Ctrl+↑ | next / previous comment |
+| | | Esc | back to the library |
 
 Drag papers onto a collection to file them; drop PDFs or folders on the window to import.
+
+## Comments
+
+While reading, just start typing: the comment goes on the highlighted sentence (or line,
+or figure). Enter adds a point under the comment (one level), Tab picks a category
+(Presentation, Rigor/Soundness, Verifiability, Novelty, Significance, Others; type `pre`
+to pick Presentation), Ctrl+Enter saves, Esc discards. Commented sentences are underlined
+in their category's color and their comments show beside the highlight: click one to edit
+it (empty it and press Ctrl+Enter to delete it). Comments stay in the library, never in the PDF.
 
 ## Building locally (Windows)
 

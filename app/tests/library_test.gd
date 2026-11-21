@@ -35,6 +35,20 @@ func _run() -> void:
 	check(lib.collection_path(related) == "Thesis / Related work", "nested collection path")
 	check(not lib.move_collection(thesis, related), "refuses to move a collection into its own child")
 
+	# Nesting: top level > 1 > 2, and no deeper.
+	var deep: String = lib.add_collection("LLM repair", related)
+	check(not deep.is_empty() and lib.depth(deep) == 2, "a sub-subcollection (2 levels down) is allowed")
+	check(lib.add_collection("Too deep", deep).is_empty(), "a third nested level is refused")
+	check(not lib.can_add_subcollection(deep) and lib.can_add_subcollection(related), "can_add_subcollection follows the limit")
+	var side: String = lib.add_collection("Side")
+	var side_child: String = lib.add_collection("Side child", side)
+	check(not lib.move_collection(side, related), "moving a 2-level collection under a level-1 one is refused (would be 3 deep)")
+	check(lib.move_collection(side, thesis), "moving it under a top-level collection is fine (2 deep)")
+	check(lib.depth(side_child) == 2, "its subcollection moved along (now 2 deep)")
+	check(lib.move_collection(side, ""), "moving it back to the top level")
+	lib.delete_collection(side)
+	lib.delete_collection(deep)
+
 	var r1: Dictionary = lib.import_pdf(args[1], related)
 	check(r1.has("paper"), "import first PDF")
 	var p1: Dictionary = r1.get("paper", {})

@@ -45,7 +45,7 @@ func load_from(root: String) -> void:
 			DirAccess.copy_absolute(path, path + ".bad")
 	# Fill fields added in later versions.
 	var defaults := {"title": "", "orig_name": "", "md5": "", "pages": 0, "added": 0, "last_read": 0,
-		"tags": [], "collections": [], "trashed": false}
+		"tags": [], "collections": [], "trashed": false, "comments": []}
 	for p in papers:
 		for k in defaults:
 			if not p.has(k):
@@ -143,7 +143,7 @@ func import_pdf(src: String, collection_id := "") -> Dictionary:
 		"size": FileAccess.get_size(src), "md5": md5, "pages": int(info.get("pages", 0)),
 		"added": int(Time.get_unix_time_from_system()), "last_read": 0,
 		"collections": [] if collection_id.is_empty() else [collection_id],
-		"tags": [], "trashed": false,
+		"tags": [], "trashed": false, "comments": [],
 	}
 	papers.append(p)
 	_commit()
@@ -161,6 +161,65 @@ func set_title(id: String, title: String) -> void:
 		return
 	p["title"] = title.strip_edges()
 	_commit()
+
+
+# ------------------------------------------------------------------ comments
+#
+# A comment: {"id", "s", "e" (reading-position keys of the commented text, see reader_view.gd),
+#   "quote" (the commented text, used to re-attach the comment if a newer analyzer
+#   numbers lines differently), "category", "text", "subs": [point texts], "created", "updated"}
+
+const COMMENT_CATEGORIES := ["Presentation", "Rigor/Soundness", "Verifiability", "Novelty", "Significance", "Others"]
+
+
+func comments(id: String) -> Array:
+	return paper(id).get("comments", [])
+
+
+## Adds a comment (no "id" yet) or replaces the one with the same id. Returns the stored comment.
+func save_comment(id: String, c: Dictionary) -> Dictionary:
+	var p := paper(id)
+	if p.is_empty():
+		return {}
+	if not p.has("comments"):
+		p["comments"] = []
+	var now := int(Time.get_unix_time_from_system())
+	var stored := c.duplicate(true)
+	stored["updated"] = now
+	if not stored.has("id") or String(stored["id"]).is_empty():
+		stored["id"] = _new_id("n")
+		stored["created"] = now
+		p["comments"].append(stored)
+	else:
+		var list: Array = p["comments"]
+		var at := -1
+		for i in list.size():
+			if list[i]["id"] == stored["id"]:
+				at = i
+		if at >= 0:
+			list[at] = stored
+		else:
+			list.append(stored)
+	_commit()
+	return stored
+
+
+func delete_comment(id: String, comment_id: String) -> void:
+	var p := paper(id)
+	if p.is_empty():
+		return
+	p["comments"] = p.get("comments", []).filter(func(c): return c["id"] != comment_id)
+	_commit()
+
+
+static func _comment_text(p: Dictionary) -> String:
+	var parts: Array[String] = []
+	for c in p.get("comments", []):
+		parts.append(String(c.get("text", "")))
+		parts.append(String(c.get("category", "")))
+		for s in c.get("subs", []):
+			parts.append(String(s))
+	return " ".join(parts)
 
 
 func mark_read(id: String) -> void:
@@ -274,7 +333,46 @@ func tag_counts(subset = null) -> Dictionary:
 
 # ------------------------------------------------------------------ collections
 
+## How deep collections can nest below a top-level collection:
+## Thesis (top) > Related work (1) > LLM repair (2), and no deeper.
+const MAX_NESTING := 2
+
+
+## 0 for a top-level collection, 1 for its subcollections, and so on.
+func depth(id: String) -> int:
+	var d := 0
+	var c := collection(collection(id).get("parent", ""))
+	while not c.is_empty() and d < 64:
+		d += 1
+		c = collection(String(c["parent"]))
+	return d
+
+
+## Levels of subcollections below a collection (0 if it has none).
+func subtree_height(id: String) -> int:
+	var h := 0
+	for c in children(id):
+		h = maxi(h, 1 + subtree_height(c["id"]))
+	return h
+
+
+## Whether a new subcollection can be made in `parent` ("" = top level is always fine).
+func can_add_subcollection(parent: String) -> bool:
+	return parent.is_empty() or depth(parent) < MAX_NESTING
+
+
+## Whether `id` (with its subcollections) can be moved under `new_parent` ("" = top level).
+func can_move_collection(id: String, new_parent: String) -> bool:
+	if collection(id).is_empty() or id == new_parent or new_parent in descendants(id):
+		return false
+	var new_depth := 0 if new_parent.is_empty() else depth(new_parent) + 1
+	return new_depth + subtree_height(id) <= MAX_NESTING
+
+
+## Creates a collection; returns "" if `parent` is already as deep as collections may nest.
 func add_collection(name: String, parent := "") -> String:
+	if not can_add_subcollection(parent):
+		return ""
 	var id := _new_id("c")
 	collections.append({"id": id, "name": name.strip_edges(), "parent": parent})
 	_commit()
@@ -289,10 +387,11 @@ func rename_collection(id: String, name: String) -> void:
 	_commit()
 
 
-## Moves a collection under another one ("" = top level). Refuses to create cycles.
+## Moves a collection under another one ("" = top level). Refuses cycles and nesting
+## deeper than MAX_NESTING.
 func move_collection(id: String, new_parent: String) -> bool:
 	var c := collection(id)
-	if c.is_empty() or id == new_parent or new_parent in descendants(id):
+	if not can_move_collection(id, new_parent):
 		return false
 	c["parent"] = new_parent
 	_commit()
@@ -379,7 +478,7 @@ func query(view: String, tags: Array = [], search := "") -> Array:
 				ok = false
 				break
 		if ok and not words.is_empty():
-			var hay := (display_title(p) + " " + " ".join(p["tags"]) + " " + String(p["orig_name"])).to_lower()
+			var hay := (display_title(p) + " " + " ".join(p["tags"]) + " " + String(p["orig_name"]) + " " + _comment_text(p)).to_lower()
 			for w in words:
 				if not hay.contains(w):
 					ok = false

@@ -20,7 +20,8 @@ func _ready() -> void:
 	_backdrop.color = Color(0, 0, 0, 0.0)
 	_backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_backdrop.gui_input.connect(func(e):
-		if e is InputEventMouseButton and e.pressed:
+		# A click outside closes the drawer; the wheel does not.
+		if e is InputEventMouseButton and e.pressed and e.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE]:
 			close())
 	add_child(_backdrop)
 

@@ -42,18 +42,13 @@ func close() -> void:
 	get_viewport().gui_release_focus()
 
 
-func _unhandled_key_input(event: InputEvent) -> void:
-	if visible and event.is_pressed() and (event as InputEventKey).keycode in [KEY_ESCAPE, KEY_S]:
-		close()
-		get_viewport().set_input_as_handled()
-
-
 func _build(storage_dir: String) -> void:
 	var backdrop := ColorRect.new()
 	backdrop.color = Color(0, 0, 0, 0.5)
 	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	backdrop.gui_input.connect(func(e):
-		if e is InputEventMouseButton and e.pressed:
+		# A click outside closes the panel; the wheel does not.
+		if e is InputEventMouseButton and e.pressed and e.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE]:
 			close())
 	add_child(backdrop)
 
@@ -93,7 +88,7 @@ func _build(storage_dir: String) -> void:
 
 	_section(col, "Zoom")
 	_option(col, "fit", FITS, FIT_NAMES)
-	_slider(col, "zoom", "Size", 0.4, 4.0, func(v): return "%d%%  (+ / − keys)" % int(round(v * 100)))
+	_slider(col, "zoom", "Size", 0.4, 4.0, func(v): return "%d%%  (Ctrl+= / Ctrl+−)" % int(round(v * 100)))
 
 	_section(col, "Scrolling")
 	_option(col, "follow", FOLLOWS, FOLLOW_NAMES)

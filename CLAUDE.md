@@ -16,9 +16,13 @@ app/                         Godot project (GL Compatibility renderer, user dir 
   scripts/steps_builder.gd   Copied unchanged from HighReader: lines -> sentence/line/float steps
   scripts/settings_panel.gd  Settings overlay (fit, scrolling, colors, style, dim, skip side columns)
   scripts/contents_panel.gd  Contents drawer (left, keyboard-driven ItemList)
+  scripts/comment_editor.gd  Comment editor (points, category list); cards are built in reader_view.gd
   helper/paperhelper.jar     Built helper (copied by Gradle; .gdignore keeps Godot out)
   tests/bridge_test.gd       Headless end-to-end check of the bridge and helper
   tests/reader_shots.gd      Windowed run: opens a PDF, presses reader keys, saves screenshots
+  tests/panel_scroll_test.gd Windowed: wheel/touchpad over open Contents/Settings must not move the page
+  tests/details_shot.gd      Windowed: screenshot of the details pane for a paper with no tags/collections
+  tests/comment_test.gd      Windowed: commenting by typing, categories, points, edit, delete, re-attach
   tests/library_test.gd      Headless library model checks (scratch folder)
   tests/library_shots.gd     Windowed library run: import, collections, tags, open, trash (scratch folder)
   tests/sentences_sample.gd, mode_switch_drift.gd   From HighReader; run on a cache JSON
@@ -75,25 +79,45 @@ optionally, publishes a Release tagged `v<version>`.
 - Rendering writes raw RGBA8 to `user://tmp/` and the bridge loads it into an Image.
 - Analysis is cached in `user://cache/<file>_<size>_v<VERSION>.json` (same format as HighReader).
 - The helper exits when its stdin closes, so it never outlives the app.
-- **Keep `PaperAnalyzer.kt` in sync with HighReader** and bump `VERSION` when output changes.
+- `PaperAnalyzer.kt` started as HighReader's; bump `VERSION` when output changes. Changes since
+  (v18, not yet in HighReader): bold also from TeX font names (Libertine/Biolinum `…TB`, `-Medi`,
+  `Demi`, `Bd`), declared weight/ForceBold, or a thick stemV; unnumbered bold headings must look
+  like titles (capital first, 3+ letters, no trailing ':'); a numbered section title ends a
+  table/figure region. Found on ACM review-format papers (headings same size as body, bold
+  only in "LinBiolinumTB"). Check Contents before/after on several papers when changing this.
 
 ## Reader (reader_view.gd)
 
 - Same modes and steps as HighReader. Zoom is `view_scale` (px per page width); fits:
   `column` (default: the column fills READ_WIDTH * zoom), `text` (the highlight does), `width`, `page`.
   Figures always fit their region. `follow`: `center` keeps the highlight at 40% height, `minimal` scrolls only near the edges.
-- Keys: →/↓/Space/J/Enter next, ←/↑/Shift+Space/K back, PgDn/PgUp page, Home/End, 1-4 mode,
-  +/−/0 zoom, C/Tab contents, S settings, Esc back. Wheel steps (scrolls in Free), Ctrl+wheel zooms,
+- Keys: →/↓/Space/Enter next, ←/↑/Shift+Space/Backspace back, PgDn/PgUp page, Home/End,
+  Ctrl+1-4 mode, Ctrl+=/−/0 zoom, Tab contents, Ctrl+, settings, Ctrl+↓/↑ next/previous comment,
+  Esc back. Any other printable key starts a comment, so plain letters/digits must never be shortcuts. Wheel steps (scrolls in Free), Ctrl+wheel zooms,
   click a word to jump, drag (or middle-drag) to look around. F11 fullscreen (main.gd).
 - Bar buttons use FOCUS_NONE so arrow keys never move GUI focus; keys are read in `_unhandled_key_input`.
 - Pages render asynchronously (`Pdf.request_render` / `take_render`), at most 2 at a time.
 - Reading positions live in `<library root>/progress.cfg`, keyed by paper id.
 
+## Comments (comment_editor.gd, reader_view.gd, library.gd)
+
+- Typing a character on a highlighted step opens the editor beside it (whole sentence, also
+  when split across columns; or the line; or the figure). Enter adds a point (one level only),
+  Tab opens the category list (type to filter, Enter/Tab picks), Ctrl+Enter saves, Esc discards,
+  Backspace in an empty point removes it. Click a comment card to edit; empty + Ctrl+Enter deletes.
+- Stored per paper in library.json: {id, kind (text|float), s, e (keys), quote, category, text,
+  subs[], created, updated}. On open, a comment whose s..e text no longer equals its quote
+  (e.g. after an analyzer VERSION bump) is re-attached to the same words nearest its old place.
+- Commented text is underlined in the category color; Ctrl+↓/↑ jumps between comments.
+  Library search also matches comment text.
+
 ## Library (library.gd, library_view.gd)
 
 - Storage (`user://`, i.e. `~/.local/share/PaperShelf` on Linux, `%APPDATA%\PaperShelf` on Windows):
   `library.json`, `papers/<id>.pdf` (copies), `cache/` (analysis), `progress.cfg`, `settings.cfg`.
-- Zotero-like: a paper can be in several collections; collections nest; deleting a collection
+- Zotero-like: a paper can be in several collections; collections nest at most
+  `Library.MAX_NESTING` (2) levels below a top-level one (add, menu and drag-drop all check
+  `can_add_subcollection` / `can_move_collection`); deleting a collection
   keeps its papers; Trash, then Delete permanently (removes the copy, cache and progress).
 - Import copies the file, skips duplicates by MD5, and asks the helper (`info`) for a title.
 - Views: "all", "unfiled", "trash", "c:<id>"; tag filter is AND; search matches title, tags, file name.

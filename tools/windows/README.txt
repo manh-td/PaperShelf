@@ -15,5 +15,7 @@ choose "More info" and "Run anyway".
 
 Keys in the library: Enter open, Delete trash, F2 rename, Ctrl+O import PDFs,
 Ctrl+Shift+O import a folder, Ctrl+F search, Ctrl+N new collection, F11 fullscreen.
-Keys in the reader: Right/Space next, Left back, PageDown/PageUp page, 1-4 mode,
-+/- zoom, C contents, S settings, Esc back to the library.
+Keys in the reader: Right/Space next, Left back, PageDown/PageUp page, Ctrl+1-4 mode,
+Ctrl+=/- zoom, Tab contents, Ctrl+, settings, Ctrl+Down/Up next/previous comment,
+Esc back to the library. To comment on the highlighted sentence, just start typing:
+Enter adds a point, Tab picks a category, Ctrl+Enter saves, Esc discards.

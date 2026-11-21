@@ -9,8 +9,10 @@ extends Control
 ##   floats   - one figure / table per step
 ##   free     - no highlight; scroll, drag and Ctrl+wheel zoom to look around
 ##
-## Keys: Right/Down/Space/J next, Left/Up/Shift+Space/K back, PageDown/PageUp next/previous
-## page, Home/End, 1-4 mode, +/-/0 zoom, C contents, S settings, Esc back.
+## Keys: Right/Down/Space/Enter next, Left/Up/Shift+Space/Backspace back, PageDown/PageUp
+## next/previous page, Home/End, Ctrl+1-4 mode, Ctrl+=/-/0 zoom, Tab contents, Ctrl+, settings,
+## Ctrl+Down/Up next/previous comment, Esc back.
+## Comments: typing any character starts a comment on the highlighted step (comment_editor.gd).
 ## Mouse: wheel steps (scrolls in Free mode), click a word to jump there, drag to look around.
 
 signal closed
@@ -18,6 +20,7 @@ signal closed
 const Steps := preload("res://scripts/steps_builder.gd")
 const SettingsPanel := preload("res://scripts/settings_panel.gd")
 const ContentsPanel := preload("res://scripts/contents_panel.gd")
+const CommentEditor := preload("res://scripts/comment_editor.gd")
 
 const MODES := ["sentence", "line", "floats", "free"]
 const MODE_NAMES := ["Sentence", "Line", "Figures", "Free"]
@@ -93,6 +96,15 @@ var _mode_btn: OptionButton
 var _notice: Label
 var _settings: SettingsPanel
 var _contents: ContentsPanel
+var _editor: CommentEditor
+var _side: VBoxContainer        # comments on the current step, right of the page
+
+# Comments of this document (Library dicts with "s"/"e" keys) and a flat word index
+# for finding commented text: _flat_keys[i] / _flat_words[i], in reading order.
+var _comments: Array = []
+var _flat_keys: PackedInt64Array = PackedInt64Array()
+var _flat_words: PackedStringArray = PackedStringArray()
+var _all_words := {}            # reading-order line index -> line_words()
 
 
 func _ready() -> void:
@@ -149,12 +161,17 @@ func open_document(id: String, title: String, analysis: Dictionary) -> void:
 	var saved: int = _progress.get_value("progress", doc_id, 0)
 	view_scale = _page_fit_scale()
 	cam = Vector2.ZERO
+	_build_word_index()
+	_load_comments()
 	_set_mode(mode, saved * KEY_SCALE, false)
 
 
 ## Esc: close Settings or Contents if open, otherwise leave the document.
 func go_back() -> void:
-	if _settings.visible:
+	if _editor.visible:
+		_editor.visible = false
+		_refresh_side()
+	elif _settings.visible:
 		_settings.close()
 	elif _contents.is_open:
 		_contents.close()
@@ -164,6 +181,7 @@ func go_back() -> void:
 
 func close_document() -> void:
 	_save_progress()
+	_editor.visible = false
 	_contents.close()
 	_settings.close()
 	_textures.clear()
@@ -216,6 +234,7 @@ func _set_mode(mode: String, key: int, animate: bool) -> void:
 	current = _step_at_key(key)
 	if mode == "free":
 		_update_status()
+		_refresh_side()
 		queue_redraw()
 	else:
 		_go_to_current(animate)
@@ -465,6 +484,7 @@ func _go_to_current(animate: bool) -> void:
 		cam = Vector2(x, y)
 	_update_status()
 	_save_progress()
+	_refresh_side()
 	queue_redraw()
 
 
@@ -546,7 +566,7 @@ func _flash(text: String) -> void:
 
 
 func _hint_text() -> String:
-	return "→ / Space next   ← back   PgDn/PgUp page   1-4 mode   +/− zoom   C contents   S settings   Esc library"
+	return "Type to comment   →/← next/back   Ctrl+↓/↑ comments   Tab contents   Ctrl+, settings   Esc library"
 
 
 # ------------------------------------------------------------------ geometry
@@ -699,6 +719,7 @@ func _draw() -> void:
 			draw_rect(r, Color(0.96, 0.96, 0.96))
 
 	if _mode() == "free" or steps.is_empty():
+		_draw_comment_marks()
 		return
 	var step: Dictionary = steps[current]
 	var holes := []   # [page, padded doc rect]
@@ -731,6 +752,26 @@ func _draw() -> void:
 			_:
 				draw_rect(sr, Color(c, fill), true)
 				draw_rect(sr, Color(c, 0.95), false, 2.0)
+	_draw_comment_marks()
+
+
+## Commented text is underlined in its category's color (figures get a corner mark).
+func _draw_comment_marks() -> void:
+	if _comments.is_empty():
+		return
+	var top := cam.y
+	var bottom := cam.y + size.y / view_scale
+	for c in _comments:
+		var col := CommentEditor.color_for(String(c.get("category", "")))
+		for r in _comment_rects(c):
+			if r.end.y < top or r.position.y > bottom:
+				continue
+			var sr := _to_screen(r)
+			var t: float = clampf(sr.size.y * 0.09, 2.0, 4.0)
+			if c.get("kind", "") == "float":
+				draw_rect(Rect2(sr.position, Vector2(t * 3.0, sr.size.y)), Color(col, 0.9))
+			else:
+				draw_rect(Rect2(sr.position.x, sr.end.y + t * 0.5, sr.size.x, t), Color(col, 0.9))
 
 
 func _draw_page_patch(page: int, doc_rect: Rect2) -> void:
@@ -751,6 +792,12 @@ func _draw_page_patch(page: int, doc_rect: Rect2) -> void:
 # ------------------------------------------------------------------ input
 
 func _gui_input(event: InputEvent) -> void:
+	# Events a panel doesn't use (e.g. the wheel over Settings) bubble up to the reader;
+	# the page must not move under an open panel.
+	if _settings.visible or _contents.is_open or _editor.visible:
+		_pressed = false
+		_dragging = false
+		return
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_LEFT or mb.button_index == MOUSE_BUTTON_MIDDLE:
@@ -825,52 +872,74 @@ func _zoom_at(screen_pos: Vector2, factor: float) -> void:
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
-	if not visible or page_rects.is_empty() or _settings.visible or _contents.is_open:
+	if not visible or page_rects.is_empty() or _contents.is_open or _editor.visible:
 		return
 	var k := event as InputEventKey
 	if k == null or not k.pressed:
 		return
+	# The reader routes keys for Settings too, so one key press never does two things
+	# (e.g. Esc closing Settings and then also leaving the document).
+	if _settings.visible:
+		if k.keycode == KEY_ESCAPE or (k.keycode == KEY_COMMA and k.is_command_or_control_pressed()):
+			_settings.close()
+			get_viewport().set_input_as_handled()
+		return
+	var ctrl := k.is_command_or_control_pressed()
+	# Typing any character on a highlighted step starts a comment on it.
+	if not ctrl and not k.alt_pressed and k.unicode > 32 and _can_comment():
+		_start_comment(String.chr(k.unicode))
+		get_viewport().set_input_as_handled()
+		return
 	var handled := true
-	match k.keycode:
-		KEY_RIGHT, KEY_DOWN, KEY_J, KEY_ENTER, KEY_KP_ENTER:
-			next_step()
-		KEY_LEFT, KEY_UP, KEY_K, KEY_BACKSPACE:
-			prev_step()
-		KEY_SPACE:
-			if k.shift_pressed:
-				prev_step()
-			else:
+	if ctrl:
+		match k.keycode:
+			KEY_1:
+				set_mode("sentence")
+			KEY_2:
+				set_mode("line")
+			KEY_3:
+				set_mode("floats")
+			KEY_4:
+				set_mode("free")
+			KEY_EQUAL, KEY_PLUS, KEY_KP_ADD:
+				change_zoom(1)
+			KEY_MINUS, KEY_KP_SUBTRACT:
+				change_zoom(-1)
+			KEY_0, KEY_KP_0:
+				change_zoom(0)
+			KEY_COMMA:
+				_open_settings()
+			KEY_DOWN:
+				_jump_to_comment(1)
+			KEY_UP:
+				_jump_to_comment(-1)
+			_:
+				handled = false
+	else:
+		match k.keycode:
+			KEY_RIGHT, KEY_DOWN, KEY_ENTER, KEY_KP_ENTER:
 				next_step()
-		KEY_PAGEDOWN:
-			page_step(1)
-		KEY_PAGEUP:
-			page_step(-1)
-		KEY_HOME:
-			go_to_start()
-		KEY_END:
-			go_to_end()
-		KEY_1:
-			set_mode("sentence")
-		KEY_2:
-			set_mode("line")
-		KEY_3:
-			set_mode("floats")
-		KEY_4:
-			set_mode("free")
-		KEY_EQUAL, KEY_PLUS, KEY_KP_ADD:
-			change_zoom(1)
-		KEY_MINUS, KEY_KP_SUBTRACT:
-			change_zoom(-1)
-		KEY_0, KEY_KP_0:
-			change_zoom(0)
-		KEY_C, KEY_TAB:
-			_open_contents()
-		KEY_S:
-			_open_settings()
-		KEY_ESCAPE:
-			go_back()
-		_:
-			handled = false
+			KEY_LEFT, KEY_UP, KEY_BACKSPACE:
+				prev_step()
+			KEY_SPACE:
+				if k.shift_pressed:
+					prev_step()
+				else:
+					next_step()
+			KEY_PAGEDOWN:
+				page_step(1)
+			KEY_PAGEUP:
+				page_step(-1)
+			KEY_HOME:
+				go_to_start()
+			KEY_END:
+				go_to_end()
+			KEY_TAB:
+				_open_contents()
+			KEY_ESCAPE:
+				go_back()
+			_:
+				handled = false
 	if handled:
 		get_viewport().set_input_as_handled()
 
@@ -891,6 +960,283 @@ func _on_resized() -> void:
 
 
 # ------------------------------------------------------------------ UI
+
+# ------------------------------------------------------------------ comments
+#
+# A comment covers the keys s..e (a whole sentence, a line, or a figure). Its "quote" is the
+# commented text; if a newer analyzer numbers lines differently, the comment is re-attached
+# to the same words nearest its old place.
+
+var _rect_cache := {}   # comment id -> Array[Rect2]
+
+
+func _build_word_index() -> void:
+	_flat_keys = PackedInt64Array()
+	_flat_words = PackedStringArray()
+	_all_words.clear()
+	for l in all_lines:
+		var i := int(l["i"])
+		var ws: Array = Steps.line_words(l)
+		_all_words[i] = ws
+		for wi in ws.size():
+			_flat_keys.append(i * KEY_SCALE + wi)
+			_flat_words.append(String(ws[wi]["t"]))
+
+
+func _range_text(s: int, e: int) -> String:
+	var out: PackedStringArray = PackedStringArray()
+	var i := _flat_keys.bsearch(s)
+	while i < _flat_keys.size() and _flat_keys[i] <= e:
+		out.append(_flat_words[i])
+		i += 1
+	return " ".join(out)
+
+
+func _load_comments() -> void:
+	_rect_cache.clear()
+	_comments = []
+	for c in Library.comments(doc_id):
+		_comments.append(_reattach(c))
+	_comments.sort_custom(func(a, b): return int(a["s"]) < int(b["s"]))
+
+
+func _reattach(c: Dictionary) -> Dictionary:
+	var quote := String(c.get("quote", ""))
+	if c.get("kind", "") == "float":
+		var key := int(c["s"])
+		for f in floats:
+			if String(f.get("t", "")) == quote and int(f["key"]) * KEY_SCALE != key:
+				var moved := c.duplicate(true)
+				moved["s"] = int(f["key"]) * KEY_SCALE
+				moved["e"] = moved["s"]
+				return Library.save_comment(doc_id, moved)
+		return c
+	if quote.is_empty() or _range_text(int(c["s"]), int(c["e"])) == quote:
+		return c
+	var q := quote.split(" ", false)
+	var best := -1
+	for i in _flat_words.size() - q.size() + 1:
+		if _flat_words[i] != q[0]:
+			continue
+		var ok := true
+		for j in range(1, q.size()):
+			if _flat_words[i + j] != q[j]:
+				ok = false
+				break
+		if ok and (best < 0 or absi(_flat_keys[i] - int(c["s"])) < absi(_flat_keys[best] - int(c["s"]))):
+			best = i
+	if best < 0:
+		return c   # the text is gone; keep the comment where it was
+	var moved := c.duplicate(true)
+	moved["s"] = _flat_keys[best]
+	moved["e"] = _flat_keys[best + q.size() - 1]
+	return Library.save_comment(doc_id, moved)
+
+
+## Doc-space rectangles of the commented text (one per line), or the figure region.
+func _comment_rects(c: Dictionary) -> Array:
+	var id := String(c.get("id", ""))
+	if _rect_cache.has(id):
+		return _rect_cache[id]
+	var out := []
+	if c.get("kind", "") == "float":
+		for f in floats:
+			if int(f["key"]) * KEY_SCALE == int(c["s"]):
+				out.append(_norm_rect(int(f["p"]), f))
+	else:
+		var i := _flat_keys.bsearch(int(c["s"]))
+		var cur_line := -1
+		var a := 0
+		var b := 0
+		while true:
+			var done := i >= _flat_keys.size() or _flat_keys[i] > int(c["e"])
+			var li := -1 if done else int(_flat_keys[i] / KEY_SCALE)
+			if li != cur_line:
+				if cur_line >= 0:
+					out.append(_words_rect(cur_line, a, b))
+				cur_line = li
+				a = int(_flat_keys[i] % KEY_SCALE) if not done else 0
+			if done:
+				break
+			b = int(_flat_keys[i] % KEY_SCALE)
+			i += 1
+	_rect_cache[id] = out
+	return out
+
+
+## Doc-space rectangle of words a..b of a line (reading-order index).
+func _words_rect(li: int, a: int, b: int) -> Rect2:
+	var line: Dictionary = all_lines[li]
+	var r := _line_rect(line)
+	var ws: Array = _all_words.get(li, [])
+	if ws.is_empty() or b >= ws.size():
+		return r
+	var pr := page_rects[int(line["p"])]
+	var x0 := pr.position.x + float(ws[a]["x0"]) * pr.size.x
+	var x1 := pr.position.x + float(ws[b]["x1"]) * pr.size.x
+	return Rect2(x0, r.position.y, x1 - x0, r.size.y)
+
+
+func _comments_on_step(step: Dictionary) -> Array:
+	var s := _step_key(step)
+	var e := _step_end(step)
+	var is_float := step.has("float")
+	return _comments.filter(func(c):
+		if (c.get("kind", "") == "float") != is_float:
+			return false
+		return int(c["s"]) == s if is_float else (int(c["s"]) <= e and int(c["e"]) >= s))
+
+
+func _can_comment() -> bool:
+	return _active_mode != "free" and not steps.is_empty()
+
+
+## Starts a new comment on the highlighted step with the first typed character.
+func _start_comment(first: String) -> void:
+	var step: Dictionary = steps[current]
+	var c := {}
+	if step.has("float"):
+		var f: Dictionary = floats[int(step["float"])]
+		var key := _step_key(step)
+		c = {"kind": "float", "s": key, "e": key, "quote": String(f.get("t", ""))}
+	else:
+		# The whole sentence, also when it is split across columns or pages.
+		var lo := current
+		var hi := current
+		if step.has("sid"):
+			while lo > 0 and steps[lo - 1].get("sid", -1) == step["sid"]:
+				lo -= 1
+			while hi < steps.size() - 1 and steps[hi + 1].get("sid", -1) == step["sid"]:
+				hi += 1
+		var s := _step_key(steps[lo])
+		var e := _step_end(steps[hi])
+		c = {"kind": "text", "s": s, "e": e, "quote": _range_text(s, e)}
+	_open_editor(c, first)
+
+
+func _edit_comment(c: Dictionary) -> void:
+	_open_editor(c, "")
+
+
+func _open_editor(c: Dictionary, first: String) -> void:
+	_side.visible = false
+	_place_right_column()
+	_editor.open(c, first)
+
+
+func _on_comment_saved(c: Dictionary) -> void:
+	Library.save_comment(doc_id, c)
+	_after_comment_change()
+
+
+func _on_comment_deleted(comment_id: String) -> void:
+	if not comment_id.is_empty():
+		Library.delete_comment(doc_id, comment_id)
+	_after_comment_change()
+
+
+func _after_comment_change() -> void:
+	_load_comments()
+	_refresh_side()
+	queue_redraw()
+
+
+## Next (dir = 1) or previous (dir = -1) comment from the reading position.
+func _jump_to_comment(dir: int) -> void:
+	if _comments.is_empty() or steps.is_empty():
+		_flash("No comments in this paper")
+		return
+	var here_s := _step_key(steps[current]) if _active_mode != "free" else _current_key()
+	var here_e := _step_end(steps[current]) if _active_mode != "free" else here_s
+	var target: Dictionary = {}
+	if dir > 0:
+		for c in _comments:
+			if int(c["s"]) > here_e:
+				target = c
+				break
+	else:
+		for i in range(_comments.size() - 1, -1, -1):
+			if int(_comments[i]["e"]) < here_s:
+				target = _comments[i]
+				break
+	if target.is_empty():
+		_flash("No more comments " + ("below" if dir > 0 else "above"))
+		return
+	if target.get("kind", "") == "float" and _active_mode != "floats":
+		set_mode("floats")
+	elif target.get("kind", "") != "float" and _active_mode in ["floats", "free"]:
+		set_mode("sentence")
+	current = _step_at_key(int(target["s"]))
+	_anchor = int(target["s"])
+	_go_to_current(true)
+
+
+func _place_right_column() -> void:
+	var right: Control = _side.get_parent()
+	right.offset_top = (_top.size.y if _top else 40.0) + 10.0
+
+
+## Cards for the comments on the highlighted step, right of the page. Click one to edit it.
+func _refresh_side() -> void:
+	if _side == null:
+		return
+	for ch in _side.get_children():
+		_side.remove_child(ch)
+		ch.queue_free()
+	if _editor.visible or _active_mode == "free" or steps.is_empty():
+		_side.visible = false
+		return
+	var list := _comments_on_step(steps[current])
+	_side.visible = not list.is_empty()
+	_place_right_column()
+	for c in list:
+		_side.add_child(_comment_card(c))
+
+
+func _comment_card(c: Dictionary) -> Control:
+	var col := CommentEditor.color_for(String(c.get("category", "")))
+	var card := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.11, 0.12, 0.15, 0.94)
+	sb.set_corner_radius_all(6)
+	sb.set_content_margin_all(10)
+	sb.border_width_left = 4
+	sb.border_color = col
+	card.add_theme_stylebox_override("panel", sb)
+	card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	card.tooltip_text = "Click to edit"
+	card.gui_input.connect(func(e):
+		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
+			_edit_comment(c)
+			card.accept_event())
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 4)
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(v)
+	var head := Label.new()
+	var cat := String(c.get("category", ""))
+	head.text = cat if not cat.is_empty() else "Comment"
+	head.add_theme_color_override("font_color", col)
+	head.add_theme_font_size_override("font_size", 13)
+	v.add_child(head)
+	var body := Label.new()
+	body.text = String(c.get("text", ""))
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(body)
+	for s in c.get("subs", []):
+		var sub := Label.new()
+		sub.text = "•  " + String(s)
+		sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		sub.add_theme_font_size_override("font_size", 15)
+		var m := MarginContainer.new()
+		m.add_theme_constant_override("margin_left", 14)
+		m.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		m.add_child(sub)
+		v.add_child(m)
+	for l in [head, body]:
+		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return card
+
 
 func _open_contents() -> void:
 	var cur := -1
@@ -950,15 +1296,15 @@ func _build_ui() -> void:
 	_mode_btn = OptionButton.new()
 	_mode_btn.focus_mode = Control.FOCUS_NONE
 	for i in MODE_NAMES.size():
-		_mode_btn.add_item("%s  (%d)" % [MODE_NAMES[i], i + 1])
+		_mode_btn.add_item("%s  (Ctrl+%d)" % [MODE_NAMES[i], i + 1])
 	_mode_btn.item_selected.connect(func(i): set_mode(MODES[i]))
 	row.add_child(_mode_btn)
 
 	var contents_btn := _bar_button("Contents", _open_contents)
-	contents_btn.tooltip_text = "Headings (C)"
+	contents_btn.tooltip_text = "Headings (Tab)"
 	row.add_child(contents_btn)
 	var settings_btn := _bar_button("Settings", _open_settings)
-	settings_btn.tooltip_text = "Reader settings (S)"
+	settings_btn.tooltip_text = "Reader settings (Ctrl+,)"
 	row.add_child(settings_btn)
 
 	_bottom = PanelContainer.new()
@@ -971,11 +1317,18 @@ func _build_ui() -> void:
 	var line_row := HBoxContainer.new()
 	col.add_child(line_row)
 	_status = Label.new()
-	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_status.size_flags_horizontal = Control.SIZE_FILL
 	line_row.add_child(_status)
 	_hint = Label.new()
 	_hint.text = _hint_text()
 	_hint.modulate = Color(1, 1, 1, 0.5)
+	# Never push into the status text: shrink with "…" on narrow windows.
+	_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_hint.clip_text = true
+	_hint.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_hint.tooltip_text = "Keys: →/↓/Space/Enter next, ←/↑/Shift+Space/Backspace back, PgDn/PgUp page, Home/End, Ctrl+1-4 mode, Ctrl+=/−/0 zoom, Tab contents, Ctrl+, settings, Ctrl+↓/↑ next/previous comment, Esc library. Type to comment on the highlight."
+	_hint.mouse_filter = Control.MOUSE_FILTER_PASS
 	line_row.add_child(_hint)
 	_bar = ProgressBar.new()
 	_bar.show_percentage = false
@@ -995,6 +1348,25 @@ func _build_ui() -> void:
 	_notice.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_notice.visible = false
 	add_child(_notice)
+
+	# Right column: the comment editor, or the comments on the highlighted step.
+	var right := VBoxContainer.new()
+	right.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	right.offset_left = -400
+	right.offset_right = -12
+	right.offset_top = 60
+	right.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	right.add_theme_constant_override("separation", 8)
+	add_child(right)
+	_editor = CommentEditor.new()
+	_editor.saved.connect(_on_comment_saved)
+	_editor.deleted.connect(_on_comment_deleted)
+	_editor.closed.connect(_refresh_side)
+	right.add_child(_editor)
+	_side = VBoxContainer.new()
+	_side.add_theme_constant_override("separation", 8)
+	_side.visible = false
+	right.add_child(_side)
 
 	_contents = ContentsPanel.new()
 	_contents.picked.connect(jump_to_contents)

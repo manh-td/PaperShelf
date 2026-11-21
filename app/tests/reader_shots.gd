@@ -12,12 +12,13 @@ func _initialize() -> void:
 	_run.call_deferred()
 
 
-func _key(code: Key, shift := false) -> void:
+func _key(code: Key, shift := false, ctrl := false) -> void:
 	for pressed in [true, false]:
 		var e := InputEventKey.new()
 		e.keycode = code
 		e.physical_keycode = code
 		e.pressed = pressed
+		e.ctrl_pressed = ctrl
 		e.shift_pressed = shift
 		Input.parse_input_event(e)
 		await process_frame
@@ -68,32 +69,32 @@ func _run() -> void:
 		await _wait(0.05)
 	await _shot("sentence_after_6")
 	print("status: ", reader._status.text)
-	await _key(KEY_2)
+	await _key(KEY_2, false, true)
 	await _shot("line_mode")
 	await _key(KEY_PAGEDOWN)
 	await _shot("page_down")
 	print("status: ", reader._status.text)
-	await _key(KEY_3)
+	await _key(KEY_3, false, true)
 	await _shot("figures_mode")
 	print("status: ", reader._status.text)
-	await _key(KEY_1)
-	await _key(KEY_C)
+	await _key(KEY_1, false, true)
+	await _key(KEY_TAB)
 	await _shot("contents")
 	await _key(KEY_DOWN)
 	await _key(KEY_DOWN)
 	await _key(KEY_ENTER)
 	await _shot("after_contents_jump")
 	print("status: ", reader._status.text)
-	await _key(KEY_S)
+	await _key(KEY_COMMA, false, true)
 	await _shot("settings")
 	await _key(KEY_ESCAPE)
-	await _key(KEY_4)
+	await _key(KEY_4, false, true)
 	await _shot("free_mode")
-	await _key(KEY_1)
-	await _key(KEY_EQUAL)
-	await _key(KEY_EQUAL)
+	await _key(KEY_1, false, true)
+	await _key(KEY_EQUAL, false, true)
+	await _key(KEY_EQUAL, false, true)
 	await _shot("zoomed_in")
-	await _key(KEY_0)
+	await _key(KEY_0, false, true)
 	await _key(KEY_ESCAPE)
 	await _shot("back_to_library")
 	print("PASS")
