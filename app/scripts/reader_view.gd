@@ -16,6 +16,7 @@ extends Control
 ## Mouse: wheel steps (scrolls in Free mode), click a word to jump there, drag to look around.
 
 signal closed
+signal review_requested(id: String)   # Review button / Ctrl+R
 
 const Steps := preload("res://scripts/steps_builder.gd")
 const SettingsPanel := preload("res://scripts/settings_panel.gd")
@@ -44,6 +45,7 @@ const DEFAULTS := {
 	"fill": 0.22,
 	"dim": 0.42,
 	"skip_side": false,
+	"comments_expanded": false,   # comment cards start minimized (Ctrl+M)
 }
 const KIND_COLORS := {
 	"heading": Color(0.30, 0.65, 1.0),
@@ -114,7 +116,8 @@ var _all_words := {}            # reading-order line index -> line_words()
 func _ready() -> void:
 	clip_contents = true
 	_progress_path = Library.root_dir().path_join("progress.cfg")
-	_settings_path = Pdf.data_path("settings.cfg")
+	# Next to the library, like reading positions (tests use a scratch library and folder).
+	_settings_path = Library.root_dir().path_join("settings.cfg")
 	_progress.load(_progress_path)
 	_settings_file.load(_settings_path)
 	for k in DEFAULTS:
@@ -165,6 +168,9 @@ func open_document(id: String, title: String, analysis: Dictionary) -> void:
 	var saved: int = _progress.get_value("progress", doc_id, 0)
 	view_scale = _page_fit_scale()
 	cam = Vector2.ZERO
+	_sel_s = -1
+	_loc_ready = false
+	_sel_e = -1
 	_build_word_index()
 	_load_comments()
 	_set_mode(mode, saved * KEY_SCALE, false)
@@ -179,6 +185,8 @@ func go_back() -> void:
 		_settings.close()
 	elif _contents.is_open:
 		_contents.close()
+	elif _active_mode == "free" and _sel_s >= 0:
+		_clear_selection()
 	else:
 		close_document()
 
@@ -224,6 +232,9 @@ func set_mode(mode: String) -> void:
 
 func _set_mode(mode: String, key: int, animate: bool) -> void:
 	_mode_btn.select(MODES.find(mode))
+	_sel_s = -1   # a Free-mode selection does not carry over
+	_sel_e = -1
+	mouse_default_cursor_shape = Control.CURSOR_ARROW
 	_active_mode = mode
 	_update_zoom_label()
 	_anchor = key
@@ -540,7 +551,7 @@ func _update_status() -> void:
 	var mode := _mode()
 	if mode == "free" or steps.is_empty():
 		var p := _page_at_view()
-		_status.text = "Free view   ·   Page %d / %d   ·   %d%%" % [p + 1, page_rects.size(), int(round(view_scale / _page_fit_scale() * 100))]
+		_status.text = "Free view   ·   Page %d / %d   ·   drag across text to select it, then type to comment" % [p + 1, page_rects.size()]
 		_bar.max_value = max(page_rects.size() - 1, 1)
 		_bar.value = p
 		return
@@ -749,6 +760,14 @@ func _draw() -> void:
 			draw_rect(r, Color(0.96, 0.96, 0.96))
 
 	if _mode() == "free" or steps.is_empty():
+		if _sel_s >= 0:
+			# The user's own selection: same color as the reading highlight.
+			var sc: Color = cfg["color"]
+			for r in _range_rects(_sel_s, _sel_e):
+				var pad: float = r.size.y * 0.12
+				var sr := _to_screen(r.grow_individual(pad, pad, pad, pad))
+				draw_rect(sr, Color(sc, 0.35), true)
+				draw_rect(sr, Color(sc, 0.9), false, 1.5)
 		_draw_comment_marks()
 		return
 	var step: Dictionary = steps[current]
@@ -827,6 +846,7 @@ func _gui_input(event: InputEvent) -> void:
 	if _settings.visible or _contents.is_open or _editor.visible:
 		_pressed = false
 		_dragging = false
+		_selecting = false
 		return
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
@@ -835,11 +855,24 @@ func _gui_input(event: InputEvent) -> void:
 				_pressed = true
 				_dragging = mb.button_index == MOUSE_BUTTON_MIDDLE
 				_press_pos = mb.position
+				_selecting = false
+				_sel_moved = false
+				# Free mode: a left drag that starts on text selects it; elsewhere it pans.
+				if mb.button_index == MOUSE_BUTTON_LEFT and _active_mode == "free":
+					var k := _flat_key_at(mb.position)
+					if k >= 0:
+						_selecting = true
+						_sel_anchor = k
 			else:
-				if _pressed and not _dragging and mb.button_index == MOUSE_BUTTON_LEFT:
-					_on_click(mb.position)
+				if _pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+					if _selecting and _sel_moved:
+						_refresh_side()
+					elif not _dragging:
+						_on_click(mb.position)
 				_pressed = false
 				_dragging = false
+				_selecting = false
+				_sel_moved = false
 			accept_event()
 		elif mb.pressed and mb.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
 			var dir := -1 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else 1
@@ -855,13 +888,26 @@ func _gui_input(event: InputEvent) -> void:
 			else:
 				prev_step()
 			accept_event()
-	elif event is InputEventMouseMotion and _pressed:
+	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
-		if not _dragging and mm.position.distance_to(_press_pos) > 6.0:
-			_dragging = true
-		if _dragging:
-			_pan(-mm.relative)
-		accept_event()
+		if _pressed and _selecting:
+			if _sel_moved or mm.position.distance_to(_press_pos) > 4.0:
+				var k := _flat_key_at(mm.position)
+				if k >= 0:
+					_sel_moved = true
+					_sel_s = mini(_sel_anchor, k)
+					_sel_e = maxi(_sel_anchor, k)
+					queue_redraw()
+			accept_event()
+		elif _pressed:
+			if not _dragging and mm.position.distance_to(_press_pos) > 6.0:
+				_dragging = true
+			if _dragging:
+				_pan(-mm.relative)
+			accept_event()
+		elif _active_mode == "free":
+			# A text cursor over words shows that they can be selected.
+			mouse_default_cursor_shape = Control.CURSOR_IBEAM if _flat_key_at(mm.position) >= 0 else Control.CURSOR_ARROW
 	elif event is InputEventMagnifyGesture:
 		var g := event as InputEventMagnifyGesture
 		_zoom_at(g.position, g.factor)
@@ -873,8 +919,18 @@ func _gui_input(event: InputEvent) -> void:
 
 
 ## A click on a word moves the reading position there (in Figures mode: to the figure clicked).
+## In Free mode a click on commented text selects it (and shows its comment); elsewhere it
+## clears the selection.
 func _on_click(pos: Vector2) -> void:
-	if _mode() == "free" or steps.is_empty():
+	if _active_mode == "free":
+		var k := _flat_key_at(pos)
+		for c in _comments:
+			if k >= 0 and c.get("kind", "") != "float" and int(c["s"]) <= k and k <= int(c["e"]):
+				_set_selection(int(c["s"]), int(c["e"]))
+				return
+		_clear_selection()
+		return
+	if steps.is_empty():
 		return
 	if _active_mode == "floats":
 		var p := _to_doc(pos)
@@ -889,6 +945,61 @@ func _on_click(pos: Vector2) -> void:
 		current = _step_at_key(key)
 		_anchor = key
 		_go_to_current(true)
+
+
+# ------------------------------------------------------------------ free-mode selection
+
+var _sel_s := -1        # selected keys (-1 = nothing selected)
+var _sel_e := -1
+var _sel_anchor := -1   # where the drag started
+var _selecting := false
+var _sel_moved := false
+
+
+func has_selection() -> bool:
+	return _sel_s >= 0
+
+
+func _set_selection(s: int, e: int) -> void:
+	_sel_s = s
+	_sel_e = e
+	queue_redraw()
+	_refresh_side()
+
+
+func _clear_selection() -> void:
+	if _sel_s < 0:
+		return
+	_sel_s = -1
+	_sel_e = -1
+	queue_redraw()
+	_refresh_side()
+
+
+## Key of the word under a screen position, on any line (captions and tables too), or -1.
+func _flat_key_at(screen_pos: Vector2) -> int:
+	var p := _to_doc(screen_pos)
+	var vis := _visible_pages()
+	var best := -1
+	var best_d := INF
+	for l in all_lines:
+		var pg := int(l["p"])
+		if not pg in vis:
+			continue
+		var r := _line_rect(l)
+		if not r.grow_individual(0.004, r.size.y * 0.25, 0.004, r.size.y * 0.25).has_point(p):
+			continue
+		var pr := page_rects[pg]
+		var ws: Array = _all_words.get(int(l["i"]), [])
+		for wi in ws.size():
+			var x0: float = pr.position.x + float(ws[wi]["x0"]) * pr.size.x
+			var x1: float = pr.position.x + float(ws[wi]["x1"]) * pr.size.x
+			var d: float = 0.0 if p.x >= x0 and p.x <= x1 else minf(absf(p.x - x0), absf(p.x - x1))
+			d += absf(p.y - r.get_center().y) * 0.25
+			if d < best_d:
+				best_d = d
+				best = int(l["i"]) * KEY_SCALE + wi
+	return best
 
 
 ## Ctrl+wheel / pinch zoom around a screen point. In the reading modes this changes the
@@ -930,6 +1041,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		_start_comment(String.chr(k.unicode))
 		get_viewport().set_input_as_handled()
 		return
+	if not ctrl and not k.alt_pressed and k.unicode > 32 and _active_mode == "free":
+		_flash("Drag across text to select it, then type to comment on it")
+		get_viewport().set_input_as_handled()
+		return
 	var handled := true
 	if ctrl:
 		match k.keycode:
@@ -949,6 +1064,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				change_zoom(0)
 			KEY_COMMA:
 				_open_settings()
+			KEY_M:
+				toggle_comments_expanded()
+			KEY_R:
+				_save_progress()
+				review_requested.emit(doc_id)
 			KEY_DOWN:
 				_jump_to_comment(1)
 			KEY_UP:
@@ -1018,6 +1138,10 @@ func _build_word_index() -> void:
 		var i := int(l["i"])
 		var ws: Array = Steps.line_words(l)
 		_all_words[i] = ws
+		# Small margin text (e.g. the line numbers of review-format papers) is never part of a
+		# quote or a selection.
+		if l.get("k", "") == "small":
+			continue
 		for wi in ws.size():
 			_flat_keys.append(i * KEY_SCALE + wi)
 			_flat_words.append(String(ws[wi]["t"]))
@@ -1038,6 +1162,11 @@ func _load_comments() -> void:
 	for c in Library.comments(doc_id):
 		_comments.append(_reattach(c))
 	_comments.sort_custom(func(a, b): return int(a["s"]) < int(b["s"]))
+	_update_comment_locations()
+
+
+static func _without_numbers(t: String) -> String:
+	return " ".join(Array(t.split(" ", false)).filter(func(w): return not String(w).is_valid_int()))
 
 
 func _reattach(c: Dictionary) -> Dictionary:
@@ -1052,6 +1181,12 @@ func _reattach(c: Dictionary) -> Dictionary:
 				return Library.save_comment(doc_id, moved)
 		return c
 	if quote.is_empty() or _range_text(int(c["s"]), int(c["e"])) == quote:
+		return c
+	# Same place, but the quote was taken with margin line numbers (older versions).
+	var now := _range_text(int(c["s"]), int(c["e"]))
+	if _without_numbers(quote) == _without_numbers(now) and not now.is_empty():
+		c["quote"] = now
+		Library.set_comment_quiet(doc_id, String(c["id"]), {"quote": now})
 		return c
 	var q := quote.split(" ", false)
 	var best := -1
@@ -1084,23 +1219,30 @@ func _comment_rects(c: Dictionary) -> Array:
 			if int(f["key"]) * KEY_SCALE == int(c["s"]):
 				out.append(_norm_rect(int(f["p"]), f))
 	else:
-		var i := _flat_keys.bsearch(int(c["s"]))
-		var cur_line := -1
-		var a := 0
-		var b := 0
-		while true:
-			var done := i >= _flat_keys.size() or _flat_keys[i] > int(c["e"])
-			var li := -1 if done else int(_flat_keys[i] / KEY_SCALE)
-			if li != cur_line:
-				if cur_line >= 0:
-					out.append(_words_rect(cur_line, a, b))
-				cur_line = li
-				a = int(_flat_keys[i] % KEY_SCALE) if not done else 0
-			if done:
-				break
-			b = int(_flat_keys[i] % KEY_SCALE)
-			i += 1
+		out = _range_rects(int(c["s"]), int(c["e"]))
 	_rect_cache[id] = out
+	return out
+
+
+## Doc-space rectangles (one per line) covering the words with keys s..e.
+func _range_rects(s: int, e: int) -> Array:
+	var out := []
+	var i := _flat_keys.bsearch(s)
+	var cur_line := -1
+	var a := 0
+	var b := 0
+	while true:
+		var done := i >= _flat_keys.size() or _flat_keys[i] > e
+		var li := -1 if done else int(_flat_keys[i] / KEY_SCALE)
+		if li != cur_line:
+			if cur_line >= 0:
+				out.append(_words_rect(cur_line, a, b))
+			cur_line = li
+			a = int(_flat_keys[i] % KEY_SCALE) if not done else 0
+		if done:
+			break
+		b = int(_flat_keys[i] % KEY_SCALE)
+		i += 1
 	return out
 
 
@@ -1117,6 +1259,96 @@ func _words_rect(li: int, a: int, b: int) -> Rect2:
 	return Rect2(x0, r.position.y, x1 - x0, r.size.y)
 
 
+# ------------------------------------------------------------------ comment locations
+#
+# "Section 2 (Methodology), Subsection 2.1 (Study Setup), sentence 2, p. 4": worked out from
+# the headings (numbered ones, plus common unnumbered ones like "Abstract") and the
+# sentence steps. Stored on each comment as "where" for the review.
+
+static var _numbered := RegEx.create_from_string("^((\\d+(\\.\\d+)*)|[A-Z])\\.?\\s+(.+)$")
+static var _named_section := RegEx.create_from_string(
+	"(?i)^(abstract|introduction|background|motivation|related work|conclusions?|discussion|" +
+	"references|bibliography|acknowledge?ments?|appendix.*|data availability.*|threats to validity|" +
+	"limitations|evaluation|methodology|results|future work)$")
+static var _float_name := RegEx.create_from_string("(?i)^(fig\\.?|figure|table|tab\\.|algorithm|listing)\\s*[\\dIVX]+[a-z]?")
+
+var _loc_ready := false
+var _loc_heads: Array = []      # [{"key", "level", "label"}] in reading order
+var _loc_steps: Array = []      # sentence steps over `lines` (for sentence numbers)
+
+
+func _build_location_index() -> void:
+	_loc_heads = []
+	for entry in Steps.build_contents(lines):
+		var text := String(entry["t"]).strip_edges()
+		var key := int(lines[int(entry["l"])]["i"]) * KEY_SCALE
+		var m := _numbered.search(text)
+		if m:
+			var num := m.get_string(1)
+			var level := num.count(".") + 1
+			var kind: String = ["Section", "Subsection", "Subsubsection"][mini(level, 3) - 1]
+			_loc_heads.append({"key": key, "level": level, "label": "%s %s (%s)" % [kind, num, m.get_string(4).strip_edges()]})
+		elif _named_section.search(text):
+			_loc_heads.append({"key": key, "level": 1, "label": text})
+	_loc_steps = Steps.build_sentence_steps(lines, words)
+	_loc_ready = true
+
+
+## Sentence id (number in the whole text) of the sentence step containing `key`.
+func _sid_at(key: int) -> int:
+	for st in _loc_steps:
+		var e: int = int(lines[int(st["segs"][-1]["l"])]["i"]) * KEY_SCALE + int(st["segs"][-1]["b"])
+		if e >= key:
+			return int(st.get("sid", 0))
+	return int(_loc_steps[-1].get("sid", 0)) if not _loc_steps.is_empty() else 0
+
+
+func _location_of(c: Dictionary) -> String:
+	if not _loc_ready:
+		_build_location_index()
+	var s := int(c["s"])
+	var e := int(c.get("e", s))
+	var li := clampi(s / KEY_SCALE, 0, maxi(all_lines.size() - 1, 0))
+	var page := int(all_lines[li]["p"]) + 1 if not all_lines.is_empty() else 1
+	# The heading path above the position: Section > Subsection > ...
+	var path: Array = []
+	var head_key := -1
+	for h in _loc_heads:
+		if int(h["key"]) > s:
+			break
+		path = path.slice(0, int(h["level"]) - 1)
+		path.append(h["label"])
+		head_key = int(h["key"])
+	var parts: Array = []
+	if c.get("kind", "") == "float":
+		var m := _float_name.search(String(c.get("quote", "")))
+		parts.append(m.get_string(0).strip_edges() if m else "Figure")
+		if not path.is_empty():
+			parts.append("in " + ", ".join(path))
+	else:
+		parts.append_array(path)
+		if head_key >= 0 and s > head_key + KEY_SCALE - 1:
+			# Sentences counted from the heading (the heading itself is sentence 0).
+			var base := _sid_at(head_key)
+			var a := _sid_at(s) - base
+			var b := _sid_at(e) - base
+			if a >= 1:
+				parts.append("sentence %d" % a if b <= a else "sentences %d–%d" % [a, b])
+		elif head_key >= 0:
+			parts.append("heading")
+	parts.append("p. %d" % page)
+	return ", ".join(parts)
+
+
+## Brings every comment's "where" up to date (after opening, or after re-attaching).
+func _update_comment_locations() -> void:
+	for c in _comments:
+		var w := _location_of(c)
+		if String(c.get("where", "")) != w:
+			c["where"] = w
+			Library.set_comment_quiet(doc_id, String(c["id"]), {"where": w})
+
+
 func _comments_on_step(step: Dictionary) -> Array:
 	var s := _step_key(step)
 	var e := _step_end(step)
@@ -1128,11 +1360,16 @@ func _comments_on_step(step: Dictionary) -> Array:
 
 
 func _can_comment() -> bool:
-	return _active_mode != "free" and not steps.is_empty()
+	if _active_mode == "free":
+		return _sel_s >= 0   # comments go on the user's own selection
+	return not steps.is_empty()
 
 
 ## Starts a new comment on the highlighted step with the first typed character.
 func _start_comment(first: String) -> void:
+	if _active_mode == "free":
+		_open_editor({"kind": "text", "s": _sel_s, "e": _sel_e, "quote": _range_text(_sel_s, _sel_e)}, first)
+		return
 	var step: Dictionary = steps[current]
 	var c := {}
 	if step.has("float"):
@@ -1165,7 +1402,9 @@ func _open_editor(c: Dictionary, first: String) -> void:
 
 
 func _on_comment_saved(c: Dictionary) -> void:
-	Library.save_comment(doc_id, c)
+	var stored := c.duplicate(true)
+	stored["where"] = _location_of(stored)
+	Library.save_comment(doc_id, stored)
 	_after_comment_change()
 
 
@@ -1183,6 +1422,9 @@ func _after_comment_change() -> void:
 
 ## Next (dir = 1) or previous (dir = -1) comment from the reading position.
 func _jump_to_comment(dir: int) -> void:
+	if _active_mode == "free":
+		_jump_to_comment_free(dir)
+		return
 	if _comments.is_empty() or steps.is_empty():
 		_flash("No comments in this paper")
 		return
@@ -1211,6 +1453,36 @@ func _jump_to_comment(dir: int) -> void:
 	_go_to_current(true)
 
 
+## Free mode: scroll to the next/previous text comment from the selection (or the view)
+## and select it, without leaving Free mode.
+func _jump_to_comment_free(dir: int) -> void:
+	var text_comments := _comments.filter(func(c): return c.get("kind", "") != "float")
+	if text_comments.is_empty():
+		_flash("No comments in this paper")
+		return
+	var here_s := _sel_s if _sel_s >= 0 else _key_at_view()
+	var here_e := _sel_e if _sel_s >= 0 else here_s - 1
+	var target: Dictionary = {}
+	if dir > 0:
+		for c in text_comments:
+			if int(c["s"]) > here_e:
+				target = c
+				break
+	else:
+		for i in range(text_comments.size() - 1, -1, -1):
+			if int(text_comments[i]["e"]) < here_s:
+				target = text_comments[i]
+				break
+	if target.is_empty():
+		_flash("No more comments " + ("below" if dir > 0 else "above"))
+		return
+	var rects := _range_rects(int(target["s"]), int(target["e"]))
+	if not rects.is_empty():
+		var top: float = rects[0].position.y
+		_animate_to(Vector2(cam.x, top - (_usable().position.y + _usable().size.y * 0.3) / view_scale), view_scale)
+	_set_selection(int(target["s"]), int(target["e"]))
+
+
 func _place_right_column() -> void:
 	var right: Control = _side.get_parent()
 	right.offset_top = (_top.size.y if _top else 40.0) + 10.0
@@ -1223,38 +1495,72 @@ func _refresh_side() -> void:
 	for ch in _side.get_children():
 		_side.remove_child(ch)
 		ch.queue_free()
-	if _editor.visible or _active_mode == "free" or steps.is_empty():
+	if _editor.visible or (_active_mode != "free" and steps.is_empty()):
 		_side.visible = false
 		return
-	var list := _comments_on_step(steps[current])
+	var list: Array
+	if _active_mode == "free":
+		# Free mode: the comments on (or overlapping) the user's selection.
+		list = [] if _sel_s < 0 else _comments.filter(func(c):
+			return c.get("kind", "") != "float" and int(c["s"]) <= _sel_e and int(c["e"]) >= _sel_s)
+	else:
+		list = _comments_on_step(steps[current])
 	_side.visible = not list.is_empty()
 	_place_right_column()
 	for c in list:
 		_side.add_child(_comment_card(c))
 
 
+## A comment card. Minimized (the default): one line with the category and the start of the
+## comment; a click expands the cards. Full: everything; a click edits the comment.
+## Ctrl+M switches all cards between the two (remembered in the settings).
 func _comment_card(c: Dictionary) -> Control:
+	var expanded: bool = cfg["comments_expanded"]
 	var col := CommentEditor.color_for(String(c.get("category", "")))
 	var card := PanelContainer.new()
+	card.set_meta("expanded", expanded)
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.11, 0.12, 0.15, 0.94)
 	sb.set_corner_radius_all(6)
-	sb.set_content_margin_all(10)
+	sb.set_content_margin_all(10 if expanded else 6)
+	sb.content_margin_left = 10
 	sb.border_width_left = 4
 	sb.border_color = col
 	card.add_theme_stylebox_override("panel", sb)
 	card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	card.tooltip_text = "Click to edit"
+	card.tooltip_text = "Click to edit   ·   Ctrl+M: minimize" if expanded else "Click or Ctrl+M to expand"
 	card.gui_input.connect(func(e):
 		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
-			_edit_comment(c)
+			if expanded:
+				_edit_comment(c)
+			else:
+				toggle_comments_expanded()
 			card.accept_event())
+	var cat := String(c.get("category", ""))
+	var subs: Array = c.get("subs", [])
+	if not expanded:
+		var line := HBoxContainer.new()
+		line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.add_child(line)
+		var tag := Label.new()
+		tag.text = "●  " + (cat if not cat.is_empty() else "Comment")
+		tag.add_theme_color_override("font_color", col)
+		tag.add_theme_font_size_override("font_size", 13)
+		line.add_child(tag)
+		var gist := Label.new()
+		gist.text = String(c.get("text", "")) + ("   +%d" % subs.size() if not subs.is_empty() else "")
+		gist.add_theme_font_size_override("font_size", 13)
+		gist.modulate = Color(1, 1, 1, 0.75)
+		gist.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		gist.clip_text = true
+		gist.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		line.add_child(gist)
+		return card
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 4)
 	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.add_child(v)
 	var head := Label.new()
-	var cat := String(c.get("category", ""))
 	head.text = cat if not cat.is_empty() else "Comment"
 	head.add_theme_color_override("font_color", col)
 	head.add_theme_font_size_override("font_size", 13)
@@ -1263,7 +1569,7 @@ func _comment_card(c: Dictionary) -> Control:
 	body.text = String(c.get("text", ""))
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(body)
-	for s in c.get("subs", []):
+	for s in subs:
 		var sub := Label.new()
 		sub.text = "•  " + String(s)
 		sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1273,9 +1579,15 @@ func _comment_card(c: Dictionary) -> Control:
 		m.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		m.add_child(sub)
 		v.add_child(m)
-	for l in [head, body]:
-		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return card
+
+
+## Ctrl+M: comment cards minimized (one line each) or full.
+func toggle_comments_expanded() -> void:
+	cfg["comments_expanded"] = not bool(cfg["comments_expanded"])
+	_save_settings()
+	_refresh_side()
+	_flash("Comments shown in full" if cfg["comments_expanded"] else "Comments minimized")
 
 
 func _open_contents() -> void:
@@ -1307,6 +1619,7 @@ func _on_setting_changed(key: String, value: Variant) -> void:
 
 ## Recomputes the lines read in text modes (and Contents) from the current settings.
 func _rebuild_text() -> void:
+	_loc_ready = false   # locations depend on which lines are read (skip side columns)
 	lines = Steps.text_lines(all_lines, bool(cfg["skip_side"]))
 	words.clear()
 	for l in lines:
@@ -1356,6 +1669,12 @@ func _build_ui() -> void:
 	zoom_box.add_child(_zoom_plus)
 	row.add_child(zoom_box)
 
+	var review_btn := _bar_button("Review", func():
+		_save_progress()
+		review_requested.emit(doc_id))
+	review_btn.tooltip_text = "Put your comments together into a review (Ctrl+R)"
+	row.add_child(review_btn)
+
 	var contents_btn := _bar_button("Contents", _open_contents)
 	contents_btn.tooltip_text = "Headings (Tab)"
 	row.add_child(contents_btn)
@@ -1383,7 +1702,7 @@ func _build_ui() -> void:
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_hint.clip_text = true
 	_hint.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	_hint.tooltip_text = "Keys: →/↓/Space/Enter next, ←/↑/Shift+Space/Backspace back, PgDn/PgUp page, Home/End, Ctrl+1-4 mode, Ctrl+=/−/0 zoom, Tab contents, Ctrl+, settings, Ctrl+↓/↑ next/previous comment, Esc library. Type to comment on the highlight."
+	_hint.tooltip_text = "Keys: →/↓/Space/Enter next, ←/↑/Shift+Space/Backspace back, PgDn/PgUp page, Home/End, Ctrl+1-4 mode, Ctrl+=/−/0 zoom, Tab contents, Ctrl+, settings, Ctrl+↓/↑ next/previous comment, Ctrl+M minimize/expand comments, Ctrl+R review, Esc library. Type to comment on the highlight."
 	_hint.mouse_filter = Control.MOUSE_FILTER_PASS
 	line_row.add_child(_hint)
 	_bar = ProgressBar.new()

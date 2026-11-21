@@ -10,16 +10,25 @@ signal saved(comment: Dictionary)
 signal deleted(comment_id: String)
 signal closed
 
-const CATEGORIES := ["Presentation", "Rigor/Soundness", "Verifiability", "Novelty", "Significance", "Others"]
+const ReviewBuilder := preload("res://scripts/review_builder.gd")
+
+const CATEGORIES := [
+	"Paper summary", "Strength", "Weakness", "Question",
+	"Presentation", "Rigor/Soundness", "Verifiability", "Novelty", "Significance", "Others",
+]
 const CATEGORY_COLORS := {
-	"Presentation": Color(0.35, 0.65, 1.0),
-	"Rigor/Soundness": Color(1.0, 0.42, 0.42),
-	"Verifiability": Color(1.0, 0.65, 0.2),
+	"Paper summary": Color(1.0, 0.55, 0.8),
+	"Strength": Color(0.4, 0.85, 0.45),
+	"Weakness": Color(1.0, 0.42, 0.42),
+	"Question": Color(0.35, 0.85, 0.95),
+	"Presentation": Color(0.35, 0.6, 1.0),
+	"Rigor/Soundness": Color(1.0, 0.62, 0.25),
+	"Verifiability": Color(0.95, 0.82, 0.3),
 	"Novelty": Color(0.75, 0.5, 1.0),
-	"Significance": Color(0.4, 0.85, 0.45),
+	"Significance": Color(0.3, 0.78, 0.7),
 	"Others": Color(0.72, 0.72, 0.75),
 }
-const NO_CATEGORY_COLOR := Color(0.95, 0.85, 0.45)
+const NO_CATEGORY_COLOR := Color(0.92, 0.92, 0.92)
 
 var _comment := {}
 var _category := ""
@@ -106,7 +115,7 @@ func _ready() -> void:
 func open(comment: Dictionary, first_text := "") -> void:
 	_comment = comment.duplicate(true)
 	_category = String(_comment.get("category", ""))
-	_quote.text = "“%s”" % String(_comment.get("quote", "")).strip_edges()
+	_quote.text = "“%s”" % ReviewBuilder.pretty_quote(String(_comment.get("quote", "")), 400)
 	_update_category()
 	_chooser.visible = false
 	for c in _items.get_children():

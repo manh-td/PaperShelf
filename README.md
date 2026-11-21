@@ -31,6 +31,8 @@ outside the app folder, so updating is just unpacking the new version.
 | Ctrl+F | search | Tab | contents |
 | Ctrl+N | new collection | Ctrl+, | settings |
 | F11 | fullscreen | Ctrl+↓ / Ctrl+↑ | next / previous comment |
+| | | Ctrl+M | minimize / expand comment cards |
+| | | Ctrl+R | review (put the comments together) |
 | | | Esc | back to the library |
 
 Drag papers onto a collection to file them; drop PDFs or folders on the window to import.
@@ -38,11 +40,24 @@ Drag papers onto a collection to file them; drop PDFs or folders on the window t
 ## Comments
 
 While reading, just start typing: the comment goes on the highlighted sentence (or line,
-or figure). Enter adds a point under the comment (one level), Tab picks a category
-(Presentation, Rigor/Soundness, Verifiability, Novelty, Significance, Others; type `pre`
-to pick Presentation), Ctrl+Enter saves, Esc discards. Commented sentences are underlined
-in their category's color and their comments show beside the highlight: click one to edit
+or figure). In Free mode, first drag across the text you want, then type. Enter adds a
+point under the comment (one level), Tab picks a category (Paper summary, Strength,
+Weakness, Question, Presentation, Rigor/Soundness, Verifiability, Novelty, Significance,
+Others; type `pre` to pick Presentation, `we` for Weakness), Ctrl+Enter saves, Esc discards. Commented sentences are underlined
+in their category's color and their comments show beside the highlight, minimized to one
+line each (Ctrl+M or a click shows them in full; click a full card to edit
 it (empty it and press Ctrl+Enter to delete it). Comments stay in the library, never in the PDF.
+
+## Reviews
+
+When you have commented a paper, press **Ctrl+R** in the reader (or **Write review** in the
+library). The Review screen puts your comments together like a conference review:
+Overall merit, Paper summary, Strengths, Weaknesses, Detailed comments for authors
+(Originality/Novelty, Significance, Soundness, Verifiability, Presentation, Other),
+Questions for authors' response and References. Each item quotes the commented text and
+where it is, e.g. *Section 2 (Methodology), Subsection 2.1 (Study Setup), sentence 2, p. 4*.
+Edit everything there (it is saved as you type), add comments made later with **Add new
+comments**, and **Export Markdown…** to save the review as a `.md` file.
 
 ## Building locally (Windows)
 

@@ -7,6 +7,7 @@ extends Control
 ## Drop PDF files or folders on the window to import them into the selected collection.
 
 signal open_requested(id: String)
+signal review_requested(id: String)
 
 const ReaderView := preload("res://scripts/reader_view.gd")
 
@@ -354,6 +355,9 @@ func _details_one(p: Dictionary) -> void:
 	else:
 		var open := _button("Open  (Enter)", func(): open_requested.emit(id))
 		actions.add_child(open)
+		var review_btn := _button("Review" if p.has("review") else "Write review", func(): review_requested.emit(id))
+		review_btn.tooltip_text = "Put the %d comment%s together into a review" % [n_comments, "" if n_comments == 1 else "s"]
+		actions.add_child(review_btn)
 		actions.add_child(_button("Show file", func(): OS.shell_show_in_file_manager(Library.paper_path(p))))
 	_details.add_child(actions)
 

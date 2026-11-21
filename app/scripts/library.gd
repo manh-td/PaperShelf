@@ -169,8 +169,6 @@ func set_title(id: String, title: String) -> void:
 #   "quote" (the commented text, used to re-attach the comment if a newer analyzer
 #   numbers lines differently), "category", "text", "subs": [point texts], "created", "updated"}
 
-const COMMENT_CATEGORIES := ["Presentation", "Rigor/Soundness", "Verifiability", "Novelty", "Significance", "Others"]
-
 
 func comments(id: String) -> Array:
 	return paper(id).get("comments", [])
@@ -202,6 +200,43 @@ func save_comment(id: String, c: Dictionary) -> Dictionary:
 			list.append(stored)
 	_commit()
 	return stored
+
+
+## Updates fields the reader works out itself ("where", a cleaned "quote") without touching
+## "updated" or notifying the library screen. Returns true if anything changed.
+func set_comment_quiet(id: String, comment_id: String, fields: Dictionary) -> bool:
+	for c in paper(id).get("comments", []):
+		if c["id"] != comment_id:
+			continue
+		var changed_any := false
+		for k in fields:
+			if c.get(k) != fields[k]:
+				c[k] = fields[k]
+				changed_any = true
+		if changed_any:
+			save()
+		return changed_any
+	return false
+
+
+# ------------------------------------------------------------------ reviews
+#
+# A review: {"merit", "sections": {key: text}, "included": [comment ids already collected],
+#   "quotes": bool (items quote the commented text and its location), "updated"}
+# Section keys and how comments fill them: review_builder.gd.
+
+func review(id: String) -> Dictionary:
+	return paper(id).get("review", {})
+
+
+func save_review(id: String, r: Dictionary) -> void:
+	var p := paper(id)
+	if p.is_empty():
+		return
+	var stored := r.duplicate(true)
+	stored["updated"] = int(Time.get_unix_time_from_system())
+	p["review"] = stored
+	_commit()
 
 
 func delete_comment(id: String, comment_id: String) -> void:

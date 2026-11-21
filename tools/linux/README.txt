@@ -21,8 +21,10 @@ Keys in the library: Enter open, Delete trash, F2 rename, Ctrl+O import PDFs,
 Ctrl+Shift+O import a folder, Ctrl+F search, Ctrl+N new collection, F11 fullscreen.
 Keys in the reader: Right/Space next, Left back, PageDown/PageUp page, Ctrl+1-4 mode,
 Ctrl+=/- zoom, Tab contents, Ctrl+, settings, Ctrl+Down/Up next/previous comment,
-Esc back to the library. To comment on the highlighted sentence, just start typing:
-Enter adds a point, Tab picks a category, Ctrl+Enter saves, Esc discards.
+Ctrl+M minimize/expand comments, Ctrl+R put the comments together into a review,
+Esc back to the library. To comment on the highlighted sentence, just start typing
+(in Free mode, drag across text first): Enter adds a point, Tab picks a category,
+Ctrl+Enter saves, Esc discards.
 
 Troubleshooting: run ./PaperShelf.x86_64 --verbose from a terminal to see the
 PDF helper's messages.

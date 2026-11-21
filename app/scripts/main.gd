@@ -5,10 +5,13 @@ extends Control
 
 const ReaderView := preload("res://scripts/reader_view.gd")
 const LibraryView := preload("res://scripts/library_view.gd")
+const ReviewView := preload("res://scripts/review_view.gd")
 
 var _library: LibraryView
 var _reader: ReaderView
 var _loading_id := ""
+var _review: ReviewView
+var _review_from: Control = null   # the screen to go back to
 
 
 func _ready() -> void:
@@ -22,13 +25,21 @@ func _ready() -> void:
 	_library = LibraryView.new()
 	_library.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_library.open_requested.connect(open_paper)
+	_library.review_requested.connect(open_review)
 	add_child(_library)
 
 	_reader = ReaderView.new()
 	_reader.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_reader.visible = false
 	_reader.closed.connect(_on_reader_closed)
+	_reader.review_requested.connect(open_review)
 	add_child(_reader)
+
+	_review = ReviewView.new()
+	_review.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_review.closed.connect(_on_review_closed)
+	add_child(_review)
+
 
 	if not Pdf.is_available():
 		_library.set_busy("The PDF helper could not start: %s" % Pdf.last_error())
@@ -86,6 +97,24 @@ func _process(_delta: float) -> void:
 		_loading_id = ""
 		_library.set_busy("Text analysis failed: " + Pdf.last_error())
 		Pdf.close_pdf()
+
+
+## Shows the Review screen for a paper, from the library or the reader; Back returns there.
+func open_review(id: String) -> void:
+	if Library.paper(id).is_empty():
+		return
+	_review_from = _reader if _reader.visible else _library
+	_reader.visible = false
+	_library.visible = false
+	_review.open(id)
+
+
+func _on_review_closed() -> void:
+	var back: Control = _review_from if _review_from else _library
+	back.visible = true
+	if back == _library:
+		_library.refresh()
+		_library.focus_list()
 
 
 func _on_reader_closed() -> void:

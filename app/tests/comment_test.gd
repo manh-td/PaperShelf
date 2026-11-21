@@ -111,7 +111,33 @@ func _run() -> void:
 		check(c["subs"] == ["Eq 3 is never defined", "Same for eq 4"], "two points at one level: %s" % str(c["subs"]))
 		check(String(c["quote"]).length() > 10, "quote: %s" % String(c["quote"]).left(60))
 	check(reader._side.visible and reader._side.get_child_count() == 1, "the comment card shows beside the highlight")
-	await _shot("card")
+	await _shot("card_minimized")
+
+	# Cards start minimized; Ctrl+M shows them in full and back; it sticks across steps.
+	var card: Control = reader._side.get_child(0)
+	check(not card.get_meta("expanded"), "the card starts minimized")
+	check(card.size.y < 50, "a minimized card is one line (%d px)" % int(card.size.y))
+	await _key(KEY_M, true)
+	await _wait(0.2)
+	card = reader._side.get_child(0)
+	check(card.get_meta("expanded"), "Ctrl+M shows the card in full")
+	await _shot("card_full")
+	await _key(KEY_RIGHT)
+	await _key(KEY_LEFT)
+	await _wait(0.3)
+	check(reader._side.get_child(0).get_meta("expanded"), "full view kept when coming back to the sentence")
+	await _key(KEY_M, true)
+	await _wait(0.2)
+	check(not reader._side.get_child(0).get_meta("expanded"), "Ctrl+M minimizes again")
+	# A click on a minimized card expands it (it does not open the editor).
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	reader._side.get_child(0).gui_input.emit(click)
+	await _wait(0.2)
+	check(reader._side.get_child(0).get_meta("expanded") and not reader._editor.visible, "clicking a minimized card expands it")
+	await _key(KEY_M, true)
+	await _wait(0.2)
 
 	# 2. The card goes away on the next sentence and returns; Ctrl+Down/Up jump to it.
 	await _key(KEY_RIGHT)

@@ -17,6 +17,8 @@ app/                         Godot project (GL Compatibility renderer, user dir 
   scripts/settings_panel.gd  Settings overlay (fit, scrolling, colors, style, dim, skip side columns)
   scripts/contents_panel.gd  Contents drawer (left, keyboard-driven ItemList)
   scripts/comment_editor.gd  Comment editor (points, category list); cards are built in reader_view.gd
+  scripts/review_view.gd     Review screen (merit + sections, saved as you type, export Markdown)
+  scripts/review_builder.gd  Comments -> review sections; review -> Markdown
   helper/paperhelper.jar     Built helper (copied by Gradle; .gdignore keeps Godot out)
   tests/bridge_test.gd       Headless end-to-end check of the bridge and helper
   tests/reader_shots.gd      Windowed run: opens a PDF, presses reader keys, saves screenshots
@@ -24,6 +26,8 @@ app/                         Godot project (GL Compatibility renderer, user dir 
   tests/details_shot.gd      Windowed: screenshot of the details pane for a paper with no tags/collections
   tests/comment_test.gd      Windowed: commenting by typing, categories, points, edit, delete, re-attach
   tests/zoom_test.gd         Windowed: zoom (Ctrl+wheel, keys, top-bar control) survives the next sentence
+  tests/selection_test.gd    Windowed: Free-mode drag selection, comment on it, click/Esc, categories
+  tests/review_test.gd       Windowed: comments in each category -> locations -> review screen -> Markdown
   tests/library_test.gd      Headless library model checks (scratch folder)
   tests/library_shots.gd     Windowed library run: import, collections, tags, open, trash (scratch folder)
   tests/sentences_sample.gd, mode_switch_drift.gd   From HighReader; run on a cache JSON
@@ -100,19 +104,41 @@ optionally, publishes a Release tagged `v<version>`.
   click a word to jump, drag (or middle-drag) to look around. F11 fullscreen (main.gd).
 - Bar buttons use FOCUS_NONE so arrow keys never move GUI focus; keys are read in `_unhandled_key_input`.
 - Pages render asynchronously (`Pdf.request_render` / `take_render`), at most 2 at a time.
-- Reading positions live in `<library root>/progress.cfg`, keyed by paper id.
+- Reading positions live in `<library root>/progress.cfg`, keyed by paper id. Reader settings are in
+  `<library root>/settings.cfg` too, so tests with a scratch library never touch the real settings.
 
 ## Comments (comment_editor.gd, reader_view.gd, library.gd)
 
 - Typing a character on a highlighted step opens the editor beside it (whole sentence, also
-  when split across columns; or the line; or the figure). Enter adds a point (one level only),
+  when split across columns; or the line; or the figure). In Free mode a left drag that starts
+  on text selects words (any line, captions too; `_flat_key_at`), typing comments on the
+  selection, a click on commented text selects it, Esc clears; a drag from a blank area pans.
+  Categories and colors: `comment_editor.gd` CATEGORIES / CATEGORY_COLORS. Enter adds a point (one level only),
   Tab opens the category list (type to filter, Enter/Tab picks), Ctrl+Enter saves, Esc discards,
   Backspace in an empty point removes it. Click a comment card to edit; empty + Ctrl+Enter deletes.
 - Stored per paper in library.json: {id, kind (text|float), s, e (keys), quote, category, text,
   subs[], created, updated}. On open, a comment whose s..e text no longer equals its quote
   (e.g. after an analyzer VERSION bump) is re-attached to the same words nearest its old place.
 - Commented text is underlined in the category color; Ctrl+↓/↑ jumps between comments.
+  Cards start minimized (one line); Ctrl+M or a click on one shows them in full
+  (`comments_expanded` in settings, kept until toggled); a click on a full card edits it.
   Library search also matches comment text.
+
+## Reviews (review_view.gd, review_builder.gd)
+
+- Per paper in library.json: `review` = {merit, sections{key: text}, included[comment ids], quotes}.
+  Opened with Ctrl+R / the Review button (reader) or Write review (library); main.gd swaps screens.
+- First open collects all comments; categories map to sections (`CATEGORY_SECTION`): list sections
+  (Strengths, Weaknesses, Questions) get "- text (where: “quote”)" with points as sub-bullets,
+  detail parts get "> where: “quote”" then the text and points, the summary is prose.
+  "Add new comments" appends comments not in `included`; "Rebuild" refills those sections but
+  keeps merit, intro and references. Export Markdown follows the usual review-form layout.
+- Each comment's `where` comes from the reader (`_location_of`): numbered headings (Section /
+  Subsection / Subsubsection) plus common unnumbered ones (Abstract, References, ...), the sentence
+  number counted from the heading, and the page; figures/tables by their label. Updated on save
+  and whenever the paper opens (`set_comment_quiet`).
+- Quotes never include "small" lines (margin line numbers are left out of the word index), and
+  `pretty_quote` joins words split at a line end ("compre- hension" -> "compre-hension").
 
 ## Library (library.gd, library_view.gd)
 
