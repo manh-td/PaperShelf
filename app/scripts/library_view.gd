@@ -1053,7 +1053,15 @@ func _build() -> void:
 		_update_sort_titles()
 		_build_list())
 	_list.multi_selected.connect(_on_multi_selected)
-	_list.item_activated.connect(_open_selected)
+	_list.item_activated.connect(_open_selected)   # Enter
+	# Double-click opens the paper under the mouse. Handled here because the list selects whole
+	# rows in multi-select mode, where Tree's own double-click activation does not fire.
+	_list.gui_input.connect(func(e):
+		if e is InputEventMouseButton and e.double_click and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
+			var it := _list.get_item_at_position(e.position)
+			if it:
+				_list.accept_event()
+				_open_paper_item(it))
 	_list.item_mouse_selected.connect(_on_list_rmb)
 	_list.set_drag_forwarding(_list_get_drag, Callable(), Callable())
 	center.add_child(_list)
@@ -1152,3 +1160,15 @@ func ask_clear_cache() -> void:
 		"Remove", func():
 			var r := Library.clear_cache()
 			set_busy("Removed %d cached file%s (%s)." % [int(r["files"]), "" if int(r["files"]) == 1 else "s", Library.size_text(int(r["bytes"]))]))
+
+
+## Opens the paper of a list row (double-click). Papers in the Trash are not opened.
+func _open_paper_item(item: TreeItem) -> void:
+	var id := String(item.get_metadata(COL_TITLE))
+	var p := Library.paper(id)
+	if p.is_empty():
+		return
+	if p.get("trashed", false):
+		set_busy("Restore this paper from the Trash to read it.")
+		return
+	open_requested.emit(id)

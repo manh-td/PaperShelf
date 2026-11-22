@@ -13,7 +13,7 @@ Back up that folder to keep your library. Deleting this app folder does not touc
 Windows may warn that the app is from an unknown publisher (it is not code-signed):
 choose "More info" and "Run anyway".
 
-Keys in the library: Enter open, Delete trash, F2 rename, Ctrl+O import PDFs,
+Keys in the library: Enter or double-click open, Delete trash, F2 rename, Ctrl+O import PDFs,
 Ctrl+Shift+O import a folder, Ctrl+F search, Ctrl+N new collection, F11 fullscreen.
 Keys in the reader: Right/Space next, Left back, PageDown/PageUp page, Ctrl+1-4 mode,
 Ctrl+=/- zoom, Tab contents, Ctrl+, settings, Ctrl+Down/Up next/previous comment,

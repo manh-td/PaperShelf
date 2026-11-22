@@ -17,7 +17,7 @@ Requirements: a desktop with OpenGL 3.3. For the system's own file dialogs,
 xdg-desktop-portal should be installed (it is on most desktops); otherwise
 PaperShelf shows its own file dialog.
 
-Keys in the library: Enter open, Delete trash, F2 rename, Ctrl+O import PDFs,
+Keys in the library: Enter or double-click open, Delete trash, F2 rename, Ctrl+O import PDFs,
 Ctrl+Shift+O import a folder, Ctrl+F search, Ctrl+N new collection, F11 fullscreen.
 Keys in the reader: Right/Space next, Left back, PageDown/PageUp page, Ctrl+1-4 mode,
 Ctrl+=/- zoom, Tab contents, Ctrl+, settings, Ctrl+Down/Up next/previous comment,

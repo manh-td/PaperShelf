@@ -23,7 +23,7 @@ outside the app folder, so updating is just unpacking the new version.
 
 | Library | | Reader | |
 |---|---|---|---|
-| Enter | open | → / Space / Enter | next sentence |
+| Enter or double-click | open | → / Space / Enter | next sentence |
 | Delete | move to Trash | ← / Shift+Space | back |
 | F2 | rename | PageDown / PageUp | next / previous page |
 | Ctrl+O | import PDFs | Ctrl+1 2 3 4 | Sentence / Line / Figures / Free |

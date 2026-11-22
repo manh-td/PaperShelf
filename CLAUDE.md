@@ -29,6 +29,7 @@ app/                         Godot project (GL Compatibility renderer, user dir 
   tests/selection_test.gd    Windowed: Free-mode drag selection, comment on it, click/Esc, categories
   tests/review_test.gd       Windowed: comments in each category -> locations -> review screen -> Markdown
   tests/locations_test.gd    Windowed: locations in front matter (title, abstract, CCS) and sections
+  tests/double_click_test.gd Windowed: double-clicking a paper (any column) opens it; one click only selects
   tests/library_test.gd      Headless library model checks (scratch folder)
   tests/library_shots.gd     Windowed library run: import, collections, tags, open, trash (scratch folder)
   tests/sentences_sample.gd, mode_switch_drift.gd   From HighReader; run on a cache JSON
@@ -160,6 +161,8 @@ optionally, publishes a Release tagged `v<version>`.
 - Clear cache (toolbar; paper menu for selected papers): `clear_cache(ids)` removes cache/*.json
   (and tmp/ when clearing all, incl. leftovers of deleted papers); nothing else is touched.
 - Views: "all", "unfiled", "trash", "c:<id>"; tag filter is AND; search matches title, tags, file name.
+- Double-click a paper opens it (handled in `_list.gui_input`: the multi-select Tree does not emit
+  item_activated on double-click).
 - Keys: Enter open, Delete trash, F2 rename, Ctrl+O / Ctrl+Shift+O import, Ctrl+F search, Ctrl+N new collection.
 - Tests use `Library.load_from(<scratch dir>)` so the real library is never touched.
 
