@@ -60,8 +60,11 @@ Overall merit, Paper summary, Strengths, Weaknesses, Detailed comments for autho
 (Originality/Novelty, Significance, Soundness, Verifiability, Presentation, Other),
 Questions for authors' response and References. Each item quotes the commented text and
 where it is, e.g. *Section 2 (Methodology), Subsection 2.1 (Study Setup), sentence 2, p. 4*.
-Edit everything there (it is saved as you type), add comments made later with **Add new
-comments**, and **Export Markdown…** to save the review as a `.md` file.
+Edit everything there (it is saved as you type). Sections you have not edited follow your
+comments automatically: new comments, edited ones and changed categories show up each time
+the review opens. A section you edited is kept; when its comments change, a note offers
+**Update from comments**. **Rebuild…** refreshes every section, and **Export Markdown…** saves
+the review as a `.md` file.
 
 ## Building locally (Windows)
 

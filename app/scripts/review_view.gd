@@ -1,7 +1,9 @@
 extends Control
-## Review screen for one paper: the overall merit and the review sections, pre-filled from
-## the paper's comments (review_builder.gd) and edited freely. Saved as you type.
-## "Add new comments" appends comments made since; "Rebuild" starts the sections over.
+## Review screen for one paper: the overall merit and the review sections, filled from the
+## paper's comments (review_builder.gd) and edited freely. Saved as you type.
+## Sections you have not edited follow the comments automatically (category changes, edits,
+## new comments) each time the screen opens. An edited section is kept; when its comments
+## change, a note offers "Update from comments". "Rebuild…" refreshes every comment section.
 ## "Export Markdown…" saves the review as a .md file. Esc goes back.
 
 signal closed
@@ -11,13 +13,14 @@ const Builder := preload("res://scripts/review_builder.gd")
 var paper_id := ""
 var _review: Dictionary = {}
 var _edits := {}            # section key -> TextEdit
+var _notes := {}            # section key -> note row ("edited; comments changed")
 var _title: Label
 var _merit: OptionButton
 var _quotes: CheckBox
-var _add_btn: Button
 var _status: Label
 var _save_timer: Timer
 var _confirm: ConfirmationDialog
+var _confirm_action: Callable
 var _export: FileDialog
 var _loading := false
 
@@ -27,19 +30,20 @@ func _ready() -> void:
 	_build()
 
 
-## Shows the review of a paper, putting it together from the comments the first time.
+## Shows the review of a paper, brought up to date with its comments.
 func open(id: String) -> void:
 	paper_id = id
 	var p := Library.paper(id)
 	_title.text = "Review: " + Library.display_title(p)
-	_review = Library.review(id)
-	if not _review.has("sections"):
-		_review = Builder.collect({"merit": "", "quotes": true}, Library.comments(id), true)
-		Library.save_review(id, _review)
+	_review = Builder.sync(Library.review(id), Library.comments(id))
+	Library.save_review(id, _review)
 	_fill()
 	visible = true
-	_status.text = "%d comment%s collected. Edit freely; changes are saved as you type." % [
-		_review.get("included", []).size(), "" if _review.get("included", []).size() == 1 else "s"]
+	var n: int = _review.get("included", []).size()
+	var stale := Builder.stale_sections(_review, Library.comments(id))
+	_status.text = "%d comment%s. Sections you haven't edited follow your comments automatically%s." % [
+		n, "" if n == 1 else "s",
+		"" if stale.is_empty() else "; %d edited section%s can be updated (see the notes)" % [stale.size(), "" if stale.size() == 1 else "s"]]
 	var first: TextEdit = _edits["summary"]
 	first.grab_focus.call_deferred()
 
@@ -58,13 +62,14 @@ func _fill() -> void:
 	_merit.select(maxi(Builder.MERITS.find(String(_review.get("merit", ""))), 0))
 	_quotes.button_pressed = bool(_review.get("quotes", true))
 	_loading = false
-	_update_add_button()
+	_update_notes()
 
 
-func _update_add_button() -> void:
-	var n := Builder.new_count(_review, Library.comments(paper_id))
-	_add_btn.text = "Add new comments (%d)" % n
-	_add_btn.disabled = n == 0
+## Shows the "edited; comments changed" note on the sections that need it.
+func _update_notes() -> void:
+	var stale := Builder.stale_sections(_review, Library.comments(paper_id))
+	for key in _notes:
+		_notes[key].visible = key in stale
 
 
 # ------------------------------------------------------------------ saving
@@ -88,21 +93,37 @@ func _save_now() -> void:
 	Library.save_review(paper_id, _review)
 
 
-func _add_new() -> void:
+## Quotes on/off: regenerate the sections that follow the comments.
+func _on_quotes_toggled(_on: bool) -> void:
+	if _loading:
+		return
 	_save_now()
-	var before := Builder.new_count(_review, Library.comments(paper_id))
-	_review = Builder.collect(_review, Library.comments(paper_id), false)
+	_review = Builder.sync(_review, Library.comments(paper_id))
 	Library.save_review(paper_id, _review)
 	_fill()
-	_status.text = "Added %d new comment%s at the end of their sections." % [before, "" if before == 1 else "s"]
+
+
+func _update_section(key: String) -> void:
+	_save_now()
+	_review = Builder.update_section(_review, Library.comments(paper_id), key)
+	Library.save_review(paper_id, _review)
+	_fill()
+	_status.text = "Updated \"%s\" from the current comments." % Builder._title(key)
 
 
 func _rebuild() -> void:
 	_save_now()
-	_review = Builder.collect(_review, Library.comments(paper_id), true)
+	_review = Builder.sync(_review, Library.comments(paper_id), true)
 	Library.save_review(paper_id, _review)
 	_fill()
 	_status.text = "Rebuilt the sections from all %d comments (merit, introduction and references kept)." % _review["included"].size()
+
+
+func _ask(text: String, ok: String, action: Callable) -> void:
+	_confirm.dialog_text = text
+	_confirm.ok_button_text = ok
+	_confirm_action = action
+	_confirm.popup_centered()
 
 
 func _export_to(path: String) -> void:
@@ -169,12 +190,12 @@ func _build() -> void:
 	_quotes.focus_mode = Control.FOCUS_NONE
 	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color", "font_focus_color"]:
 		_quotes.add_theme_color_override(c, Color(0.88, 0.88, 0.9))
-	_quotes.toggled.connect(func(_on): _changed())
+	_quotes.toggled.connect(_on_quotes_toggled)
 	row.add_child(_quotes)
-	_add_btn = _button("Add new comments (0)", _add_new, "Append comments made since the review was put together")
-	row.add_child(_add_btn)
 	row.add_child(_button("Rebuild…", func():
-		_confirm.popup_centered(), "Start the sections over from all comments"))
+		_ask("Rebuild every section from the current comments?
+Your edits in the sections filled from comments are replaced; the overall merit, introduction and references are kept.",
+			"Rebuild", _rebuild), "Refill all comment sections, also the ones you edited"))
 	row.add_child(_button("Export Markdown…", export_dialog, "Save the review as a .md file"))
 
 	var scroll := ScrollContainer.new()
@@ -222,6 +243,29 @@ func _build() -> void:
 			h.add_theme_font_size_override("font_size", 13)
 			h.modulate = Color(1, 1, 1, 0.45)
 			col.add_child(h)
+		if key in Builder.comment_sections():
+			# Shown when you edited this section and its comments changed since.
+			var note := HBoxContainer.new()
+			note.visible = false
+			var nl := Label.new()
+			nl.text = "You edited this section, and its comments have changed since (new, edited or re-categorized)."
+			nl.add_theme_font_size_override("font_size", 13)
+			nl.add_theme_color_override("font_color", Color(1.0, 0.8, 0.35))
+			nl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			nl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			note.add_child(nl)
+			var section_title: String = s[1]
+			note.add_child(_button("Update from comments", func():
+				_ask("Replace \"%s\" with what your comments give now?\nYour edits in this section are replaced." % section_title,
+					"Update", _update_section.bind(key)), "Replace this section with the current comments"))
+			_notes[key] = note
+			if detail:
+				var nm := MarginContainer.new()
+				nm.add_theme_constant_override("margin_left", 18)
+				nm.add_child(note)
+				col.add_child(nm)
+			else:
+				col.add_child(note)
 		var te := TextEdit.new()
 		te.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 		te.scroll_fit_content_height = true
@@ -252,9 +296,9 @@ func _build() -> void:
 	add_child(_save_timer)
 
 	_confirm = ConfirmationDialog.new()
-	_confirm.dialog_text = "Rebuild the review sections from all comments?\nYour edits in the sections filled from comments are replaced; the overall merit, introduction and references are kept."
-	_confirm.ok_button_text = "Rebuild"
-	_confirm.confirmed.connect(_rebuild)
+	_confirm.confirmed.connect(func():
+		if _confirm_action.is_valid():
+			_confirm_action.call())
 	add_child(_confirm)
 
 	_export = FileDialog.new()

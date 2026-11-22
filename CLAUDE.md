@@ -127,13 +127,18 @@ optionally, publishes a Release tagged `v<version>`.
 
 ## Reviews (review_view.gd, review_builder.gd)
 
-- Per paper in library.json: `review` = {merit, sections{key: text}, included[comment ids], quotes}.
+- Per paper in library.json: `review` = {merit, sections{key: text}, generated{key: text last
+  generated}, included[comment ids], quotes}.
   Opened with Ctrl+R / the Review button (reader) or Write review (library); main.gd swaps screens.
-- First open collects all comments; categories map to sections (`CATEGORY_SECTION`): list sections
+- `sync` runs on every open: a comment section whose text still equals `generated[key]` (or is
+  empty) is regenerated from all comments, so category changes, edits and new comments show up;
+  an edited one is kept and `stale_sections` shows a note with "Update from comments".
+  Reviews from before `generated` existed count their non-empty sections as edited.
+- Categories map to sections (`CATEGORY_SECTION`): list sections
   (Strengths, Weaknesses, Questions) get "- text (where: “quote”)" with points as sub-bullets,
   detail parts get "> where: “quote”" then the text and points, the summary is prose.
-  "Add new comments" appends comments not in `included`; "Rebuild" refills those sections but
-  keeps merit, intro and references. Export Markdown follows the usual review-form layout.
+  "Rebuild" (sync with force) refills all comment sections but keeps merit, intro and references.
+  Export Markdown follows the usual review-form layout.
 - Each comment's `where` comes from the reader (`_location_of`): numbered headings (Section /
   Subsection / Subsubsection) plus common unnumbered ones (Abstract, References, ...), the sentence
   number counted from the heading, and the page; figures/tables by their label. Updated on save

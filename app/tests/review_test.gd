@@ -154,27 +154,70 @@ func _run() -> void:
 	check(saved["merit"] == "Weak reject", "merit saved")
 	await root.get_texture().get_image().save_png(out_dir.path_join("review_screen.png"))
 
-	# 4. Back to the reader, one more comment, then "Add new comments".
+	# 4. The review follows the comments: a new comment, and a re-categorized one, show up
+	#    in the right sections the next time the review opens (sections not edited by hand).
 	await _key(KEY_ESCAPE)
 	await _wait(0.3)
 	check(reader.visible and not review.visible, "Esc goes back to the reader")
 	check(await _go_after_heading("2.3", 1), "found subsection 2.3")
 	await _comment("Support threshold is arbitrary", "we")
+	var motivation: Dictionary = {}
+	for c in Library.comments(paper_id):
+		if c["text"] == "Clear motivation":
+			motivation = c.duplicate(true)
+	motivation["category"] = "Weakness"     # was Strength
+	Library.save_comment(paper_id, motivation)
 	await _key(KEY_R, true)
 	await _wait(0.4)
-	check(review._add_btn.text == "Add new comments (1)" and not review._add_btn.disabled, "one new comment waiting")
-	review._add_new()
-	check(String(ed["weaknesses"].text).contains("\n- Support threshold is arbitrary"), "new comment appended to Weaknesses")
+	check(String(ed["weaknesses"].text).contains("\n- Support threshold is arbitrary"), "a new comment appears in Weaknesses by itself")
+	check(String(ed["weaknesses"].text).begins_with("- Clear motivation"), "a comment changed to Weakness moves to Weaknesses (reading order)")
+	check(String(ed["strengths"].text).strip_edges().is_empty(), "... and leaves Strengths")
 	check(String(ed["intro"].text).begins_with("Overall, a solid"), "the introduction is kept")
 
-	# 5. Rebuild keeps hand-written parts; export Markdown.
-	ed["weaknesses"].text = "edited by hand"
+	# 5. A section edited by hand is kept; when its comments change, a note offers an update.
+	ed["weaknesses"].text = "- My own wording of the weaknesses"
+	ed["weaknesses"].text_changed.emit()
+	await _key(KEY_ESCAPE)
+	await _wait(0.3)
+	check(await _go_after_heading("2.3", 2), "found sentence 2 of subsection 2.3")
+	await _comment("Only two models are studied", "we")
+	await _key(KEY_R, true)
+	await _wait(0.4)
+	check(String(ed["weaknesses"].text) == "- My own wording of the weaknesses", "an edited section is not overwritten")
+	check(review._notes["weaknesses"].visible, "its note says the comments changed")
+	check(not review._notes["presentation"].visible, "unedited sections show no note")
+	review._update_section("weaknesses")
+	check(String(ed["weaknesses"].text).contains("Only two models are studied") and not review._notes["weaknesses"].visible,
+		"Update from comments refreshes the section and hides the note")
+
+	# 6. Rebuild refreshes every comment section, also edited ones; hand-written parts stay.
+	ed["presentation"].text = "edited by hand"
+	ed["presentation"].text_changed.emit()
 	review._rebuild()
-	check(String(ed["weaknesses"].text).begins_with("- The sampling") and String(ed["intro"].text).begins_with("Overall"), "Rebuild refills sections, keeps the introduction")
+	check(String(ed["presentation"].text).contains("Figure fonts are too small") and String(ed["intro"].text).begins_with("Overall"),
+		"Rebuild refreshes edited sections and keeps the introduction")
+
+	# 7. A review made by the earlier version (no record of what was generated): its filled
+	#    sections count as edited (kept, with a note if out of date); empty ones are filled.
+	await _key(KEY_ESCAPE)   # leave the review first; it saves what is on screen
+	await _wait(0.2)
+	var old: Dictionary = Library.review(paper_id).duplicate(true)
+	old.erase("generated")
+	old["sections"]["novelty"] = "old text from before"
+	old["sections"]["strengths"] = ""
+	old["sections"]["questions"] = ""
+	Library.save_review(paper_id, old)
+	await _key(KEY_R, true)
+	await _wait(0.4)
+	check(String(ed["novelty"].text) == "old text from before" and review._notes["novelty"].visible, "old review: filled section kept, with a note")
+	check(String(ed["questions"].text).begins_with("- Is the taxonomy validated"), "old review: empty Questions filled from the comments")
+
+	# Export Markdown.
+	review._update_section("novelty")
 	var md_path := out_dir.path_join("review.md")
 	review._export_to(md_path)
 	var md := FileAccess.get_file_as_string(md_path)
-	var order := ["# Reasoning Patterns", "## Overall merit: Weak reject", "## Paper summary", "## Strengths", "## Weaknesses",
+	var order := ["# Reasoning Patterns", "## Overall merit: Weak reject", "## Paper summary", "## Weaknesses",
 		"## Detailed comments for authors", "Overall, a solid", "**Originality/Novelty**", "**Soundness**", "**Presentation**",
 		"## Questions for authors’ response"]
 	var pos := -1

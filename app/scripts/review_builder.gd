@@ -120,36 +120,74 @@ static func item_text(c: Dictionary, kind: String, quotes: bool) -> String:
 			return " ".join(parts)
 
 
-## Adds the comments not in the review yet (all of them with `rebuild`, which first clears
-## the sections that comments fill). Hand-written parts (merit, intro, references) stay.
-static func collect(review: Dictionary, comments: Array, rebuild: bool) -> Dictionary:
+## Sections that comments fill (everything but the hand-written intro and references).
+static func comment_sections() -> Array:
+	return SECTIONS.map(func(s): return s[0]).filter(func(k): return not k in ["intro", "references"])
+
+
+## The comment sections as they would be generated from `comments` now (reading order).
+static func generate(comments: Array, quotes: bool) -> Dictionary:
+	var out := {}
+	for key in comment_sections():
+		out[key] = ""
+	var sorted := comments.duplicate()
+	sorted.sort_custom(func(a, b): return int(a["s"]) < int(b["s"]))
+	for c in sorted:
+		var key := section_for(String(c.get("category", "")))
+		var kind := section_kind(key)
+		var item := item_text(c, kind, quotes)
+		var sep := "\n" if kind == "list" else "\n\n"
+		out[key] = item if String(out[key]).is_empty() else String(out[key]) + sep + item
+	return out
+
+
+## Brings the review up to date with the comments. A section the user has not edited (its
+## text is still what was last generated, or it is empty) is regenerated, so re-categorized,
+## edited, moved and new comments show up. Edited sections are kept as they are; see
+## stale_sections(). With `force`, every comment section is regenerated (Rebuild).
+## Reviews made before this ("generated" missing) count their non-empty sections as edited.
+static func sync(review: Dictionary, comments: Array, force := false) -> Dictionary:
 	var r := review.duplicate(true)
 	if not r.has("sections"):
 		r["sections"] = {}
 	if not r.has("quotes"):
 		r["quotes"] = true
-	var included: Array = [] if rebuild else r.get("included", []).duplicate()
-	if rebuild:
-		for s in SECTIONS:
-			if not s[0] in ["intro", "references"]:
-				r["sections"][s[0]] = ""
-	var fresh := comments.filter(func(c): return not c["id"] in included)
-	fresh.sort_custom(func(a, b): return int(a["s"]) < int(b["s"]))
-	for c in fresh:
-		var key := section_for(String(c.get("category", "")))
-		var kind := section_kind(key)
-		var item := item_text(c, kind, bool(r["quotes"]))
-		var cur := String(r["sections"].get(key, "")).strip_edges()
-		var sep := "\n" if kind == "list" else "\n\n"
-		r["sections"][key] = item if cur.is_empty() else cur + sep + item
-		included.append(c["id"])
-	r["included"] = included
+	var generated: Dictionary = r.get("generated", {})
+	var fresh := generate(comments, bool(r["quotes"]))
+	for key in comment_sections():
+		var cur := String(r["sections"].get(key, ""))
+		var untouched := cur.strip_edges().is_empty() or (generated.has(key) and cur == String(generated[key]))
+		if force or untouched:
+			r["sections"][key] = fresh[key]
+			generated[key] = fresh[key]
+	r["generated"] = generated
+	r["included"] = comments.map(func(c): return c["id"])
 	return r
 
 
-static func new_count(review: Dictionary, comments: Array) -> int:
-	var included: Array = review.get("included", [])
-	return comments.filter(func(c): return not c["id"] in included).size()
+## Sections the user edited whose comments have changed since (they are not updated
+## automatically; the review screen offers "Update from comments" for each).
+static func stale_sections(review: Dictionary, comments: Array) -> Array:
+	var generated: Dictionary = review.get("generated", {})
+	var fresh := generate(comments, bool(review.get("quotes", true)))
+	var out := []
+	for key in comment_sections():
+		var cur := String(review.get("sections", {}).get(key, ""))
+		var edited := not cur.strip_edges().is_empty() and (not generated.has(key) or cur != String(generated[key]))
+		if edited and fresh[key] != String(generated.get(key, "")):
+			out.append(key)
+	return out
+
+
+## Replaces one section with what the comments give now (after the user confirms).
+static func update_section(review: Dictionary, comments: Array, key: String) -> Dictionary:
+	var r := review.duplicate(true)
+	var fresh := generate(comments, bool(r.get("quotes", true)))
+	r["sections"][key] = fresh[key]
+	if not r.has("generated"):
+		r["generated"] = {}
+	r["generated"][key] = fresh[key]
+	return r
 
 
 ## The review as Markdown, laid out like a conference review form.
